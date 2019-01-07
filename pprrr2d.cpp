@@ -72,7 +72,7 @@ Vector xi;			// the trajectory (q_1, q_2, ...q_n)
 Vector qs;			// the start config a.k.a. q_0
 Vector qe;			// the end config a.k.a. q_(n+1)
 static size_t const obs_dim(3); // x,y,R
-static size_t const nq (40);	// number of q stacked into xi
+static size_t const nq (20);	// number of q stacked into xi
 static size_t const cdim (5);	// dimension of config space
 static size_t const xidim (nq * cdim); // dimension of trajectory, xidim = nq * cdim
 static double const dt (1.0);	       // time step
@@ -115,7 +115,8 @@ enum { PAUSE, STEP, RUN } state;
 //static handle_s * grabbed (0);
 static Vector grab_offset (3);
 static int grabbed(-1);
-
+int countvar = 0;
+std::chrono::duration<double> elapsed;
 
 //////////////////////////////////////////////////
 // robot (one per waypoint)
@@ -283,6 +284,7 @@ vector <Robot> robots;
 
 static void update_robots ()
 {
+   if(countvar < 100){
     auto start = std::chrono::high_resolution_clock::now();
 
   rstart.update (qs);
@@ -294,8 +296,15 @@ static void update_robots ()
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
   }
     auto finish = std::chrono::high_resolution_clock::now();
-std::chrono::duration<double> elapsed = finish - start;
-std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+    elapsed+= finish - start;
+//std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+  //countvar++;
+  }
+  else{
+    //std::cout << "Elapsed time: " << elapsed.count()/100 << " s\n";
+    elapsed = std::chrono::seconds { 0 };
+    countvar = 0;
+  }
 }
 
 
@@ -383,13 +392,28 @@ static void cb_idle ()
   
   //////////////////////////////////////////////////
   // beginning of "the" CHOMP iteration
-  
+  if(countvar < 100){
+  auto start = std::chrono::high_resolution_clock::now();
+
   Vector nabla_smooth (AA * xi + bb);
   Vector const & xidd (nabla_smooth); // indeed, it is the same in this formulation...
   
   Vector nabla_obs (Vector::Zero (xidim));
-  #pragma omp parallel for
-  for (int iq = 0; iq < nq; ++iq) {
+  //#pragma omp parallel for
+  int arr[nq];
+  for (int i=0; i < nq; i++)
+    {
+        arr[i] = i;
+    }
+
+  random_shuffle(&arr[0], &arr[nq-1]);
+  // for (int i=0; i < nq; i++)
+  //   {
+  //       std::cout << arr[i] << " ";
+  //   }
+
+  for (int p = nq-1; -1 < p; --p) {
+    int iq = arr[p];
     Vector qd;
     if (iq == nq - 1) {
       qd = qe - xi.block (iq * cdim, 0, cdim, 1);
@@ -414,7 +438,6 @@ static void cb_idle ()
       Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
       Vector const kappa (prj * xdd / pow (vel, 2.0));
-      //std::cout << "gothere3" << std::endl;
           for (int ii = 0; ii < obs.cols(); ii++) {
           //cout << obs.size()<< endl;
           //printDimensions(xx);
@@ -432,7 +455,7 @@ static void cb_idle ()
           // std::cout << "dist: "<< dist << std::endl; 
           // std::cout << " ii): "<< ii << std::endl; 
           // std::cout << " obs(2, ii): "<< obs(2, ii) << std::endl; 
-          if ((dist >= obs(2, ii)) || (dist < 1e-9))
+          if ((dist >= obs(2, ii))*2 || (dist < 1e-9))
             continue;
 
           static double const gain(1.0);
@@ -442,6 +465,7 @@ static void cb_idle ()
           delta *= -gain *pow(1.0 - dist / obs(2, ii), 2.0) / dist;                       // hardcoded param
           nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa); // delta F obslacate close
         }
+         
       // Vector delta (xx.block (0, 0, 2, 1) - repulsor.point_);
       // double const dist (delta.norm());
       // static double const maxdist (4.0);
@@ -453,6 +477,7 @@ static void cb_idle ()
       // delta *= - gain * pow (1.0 - dist / maxdist, 2.0) / dist;
       // nabla_obs.block (iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa);
     }
+
   }
   
   Vector dxi (Ainv * (nabla_obs + lambda * nabla_smooth));
@@ -462,6 +487,17 @@ static void cb_idle ()
   //////////////////////////////////////////////////
   
   update_robots ();
+auto finish = std::chrono::high_resolution_clock::now();
+        elapsed+= finish - start;
+  countvar++;
+  }
+  else{
+    std::cout << "Elapsed time: " << elapsed.count()/100 << " s\n";
+    elapsed = std::chrono::seconds { 0 };
+    countvar = 0;
+  }
+  // std::cout << "Elapsed time: " << elapsed.count()/4 << " s\n";
+  //   elapsed = std::chrono::seconds { 0 };
 }
 
 
@@ -597,9 +633,66 @@ static void cb_mouse (double px, double py, int flags)
 
 int main()
 {
-  struct timeval tt;
-  gettimeofday (&tt, NULL);
-  srand (tt.tv_usec);
+   struct timeval tt;
+   gettimeofday (&tt, NULL);
+   srand (tt.tv_usec);
+
+   // int x =10;
+   // int y =10;
+   // int A[x][y];
+   // int B[x][y];
+   // int C[x][y];
+   // int i1, i2;
+   // cout << endl;
+   // cout << "---------------";
+
+   // for (i1 = 0; i1 < x; i1++) {
+   //  cout << endl;;
+   //  for (i2 = 0; i2 < y; i2++) {
+   //   A[i1][i2] = rand()% 100 + 1;
+   //   cout << A[i1][i2] << "\t";
+   //  }
+   // }
+   // cout << endl;
+   // cout << "---------------";
+   //  for (i1 = 0; i1 < x; i1++) {
+   //  cout << endl;;
+   //  for (i2 = 0; i2 < y; i2++) {
+   //   B[i1][i2] = rand()% 100 + 1;
+   //   cout << B[i1][i2] << "\t";
+   //  }
+   // }
+
+
+  // std::cout << "gothere4" << std::endl;
+ 
+  //     Eigen::MatrixXd a = Eigen::MatrixXd::Random(10, 10);
+  //     Eigen::MatrixXd b = Eigen::MatrixXd::Random(10, 10);
+  //      Eigen::MatrixXd c;
+  //   auto start = std::chrono::high_resolution_clock::now();
+
+  //   for(int x = 0; x <10000; ++x){
+      
+  //     c = a * b;
+      
+  //   }
+
+
+  // for(int p = 0; p <10000; ++p){      
+  //   for (int r = 0; r < x; r++) {
+  //   for (int c = 0; c < y; c++) {
+  //       for (int in = 0; in < x; in++) {
+  //           C[r][c] += A[r][in] * B[in][c];
+  //       }
+  //       //cout << C[r][c] << "  ";
+  //   }
+  //   //cout << "\n";
+  //   }
+  // }
+
+    // auto finish = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> elapsed = finish - start;
+    // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   add_obs(3.0, 0.0, 2.0);
   add_obs(0.0, 3.0, 2.0);
   init_chomp();
