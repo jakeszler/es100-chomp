@@ -51,7 +51,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <err.h>
-
+#include <chrono>
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
 typedef Eigen::Isometry3d Transform;
@@ -161,6 +161,8 @@ vector <Robot> robots;
 
 static void update_robots ()
 {
+  auto start = std::chrono::high_resolution_clock::now();
+
   rstart.update (qs);
   rend.update (qe);
   if (nq != robots.size()) {
@@ -168,7 +170,12 @@ static void update_robots ()
   }
   for (size_t ii (0); ii < nq; ++ii) {
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
+
   }
+  auto finish = std::chrono::high_resolution_clock::now();
+std::chrono::duration<double> elapsed = finish - start;
+std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+
 }
 
 

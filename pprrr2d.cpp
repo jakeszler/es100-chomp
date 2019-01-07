@@ -55,6 +55,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <err.h>
+#include <chrono>
 
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
@@ -62,6 +63,7 @@ typedef Eigen::Isometry3d Transform;
 
 using namespace std;
 
+Eigen::IOFormat CleanFmt(2, 0, ", ", "\n", "[", "]");
 
 //////////////////////////////////////////////////
 // trajectory etc
@@ -69,7 +71,8 @@ using namespace std;
 Vector xi;			// the trajectory (q_1, q_2, ...q_n)
 Vector qs;			// the start config a.k.a. q_0
 Vector qe;			// the end config a.k.a. q_(n+1)
-static size_t const nq (20);	// number of q stacked into xi
+static size_t const obs_dim(3); // x,y,R
+static size_t const nq (40);	// number of q stacked into xi
 static size_t const cdim (5);	// dimension of config space
 static size_t const xidim (nq * cdim); // dimension of trajectory, xidim = nq * cdim
 static double const dt (1.0);	       // time step
@@ -82,34 +85,36 @@ static double const lambda (1.0); // weight of smoothness objective
 Matrix AA;			// metric
 Vector bb;			// acceleration bias for start and end config
 Matrix Ainv;			// inverse of AA
+Matrix obs;                     // Matrix containninging all obstacles, each column is (x,y,R) of the obstacle
 
 //////////////////////////////////////////////////
 // gui stuff
 
 enum { PAUSE, STEP, RUN } state;
 
-struct handle_s {
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+// struct handle_s {
+//   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   
-  handle_s (double radius, double red, double green, double blue, double alpha)
-    : point_(2),
-      radius_(radius),
-      red_(red),
-      green_(green),
-      blue_(blue),
-      alpha_(alpha)
-  {
-  }
+//   handle_s (double radius, double red, double green, double blue, double alpha)
+//     : point_(2),
+//       radius_(radius),
+//       red_(red),
+//       green_(green),
+//       blue_(blue),
+//       alpha_(alpha)
+//   {
+//   }
   
-  Vector point_;
-  double radius_, red_, green_, blue_, alpha_;
-};
+//   Vector point_;
+//   double radius_, red_, green_, blue_, alpha_;
+// };
 
-static handle_s repulsor (1.5, 0.0, 0.0, 1.0, 0.2);
+// static handle_s repulsor (1.5, 0.0, 0.0, 1.0, 0.2);
 
-static handle_s * handle[] = { &repulsor, 0 };
-static handle_s * grabbed (0);
+//static handle_s * handle[] = { &repulsor, 0 };
+//static handle_s * grabbed (0);
 static Vector grab_offset (3);
+static int grabbed(-1);
 
 
 //////////////////////////////////////////////////
@@ -266,8 +271,8 @@ public:
 
 double const Robot::radius_ (0.5);
 double const Robot::len_a_ (0.8);
-double const Robot::len_b_ (0.6);
-double const Robot::len_c_ (0.3);
+double const Robot::len_b_ (0.9);
+double const Robot::len_c_ (0.9);
 
 Robot rstart;
 Robot rend;
@@ -278,6 +283,8 @@ vector <Robot> robots;
 
 static void update_robots ()
 {
+    auto start = std::chrono::high_resolution_clock::now();
+
   rstart.update (qs);
   rend.update (qe);
   if (nq != robots.size()) {
@@ -286,6 +293,9 @@ static void update_robots ()
   for (size_t ii (0); ii < nq; ++ii) {
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
   }
+    auto finish = std::chrono::high_resolution_clock::now();
+std::chrono::duration<double> elapsed = finish - start;
+std::cout << "Elapsed time: " << elapsed.count() << " s\n";
 }
 
 
@@ -297,7 +307,7 @@ static void init_chomp ()
   qe.resize (5);
   qe << 7.0, 7.0, -M_PI/2, -M_PI/2, M_PI/2;
   
-  repulsor.point_ << 3.0, 0.0;
+  //repulsor.point_ << 6.0, 3.0;
   
   // cout << "qs\n" << qs
   //      << "\nxi\n" << xi
@@ -321,7 +331,8 @@ static void init_chomp ()
   // not needed anyhow
   // double cc (double (qs.transpose() * qs) + double (qe.transpose() * qe));
   // cc /= dt * dt * (nq + 1);
-  
+    //std::cout << AA.format(CleanFmt) << std::endl;
+    //std::cout << "The matrix m is of size " << AA.rows() << "x" << AA.cols() << std::endl; 
   Ainv = AA.inverse();
   
   // cout << "AA\n" << AA
@@ -377,7 +388,8 @@ static void cb_idle ()
   Vector const & xidd (nabla_smooth); // indeed, it is the same in this formulation...
   
   Vector nabla_obs (Vector::Zero (xidim));
-  for (size_t iq (0); iq < nq; ++iq) {
+  #pragma omp parallel for
+  for (int iq = 0; iq < nq; ++iq) {
     Vector qd;
     if (iq == nq - 1) {
       qd = qe - xi.block (iq * cdim, 0, cdim, 1);
@@ -387,26 +399,59 @@ static void cb_idle ()
     }
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
       Vector const xx (robots[iq].frame(ib).translation());
+      //std::cout << xx << std::endl;
       Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
+       //std::cout << JJ.format(CleanFmt) << std::endl;
+      //std::cout << "The matrix m is of size " << JJ.rows() << "x" << JJ.cols() << std::endl; 
+      
       Vector const xd (JJ * qd);
       double const vel (xd.norm());
       if (vel < 1.0e-3) {	// avoid div by zero further down
-	continue;
+	     continue;
       }
+        //std::cout << "gothere2 " << std::endl;
       Vector const xdn (xd / vel);
       Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
       Vector const kappa (prj * xdd / pow (vel, 2.0));
-      Vector delta (xx.block (0, 0, 2, 1) - repulsor.point_);
-      double const dist (delta.norm());
-      static double const maxdist (4.0);
-      if ((dist >= maxdist) || (dist < 1e-9)) {
-	continue;
-      }
-      static double const gain (10.0);
-      double const cost (gain * maxdist * pow (1.0 - dist / maxdist, 3.0) / 3.0);
-      delta *= - gain * pow (1.0 - dist / maxdist, 2.0) / dist;
-      nabla_obs.block (iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa);
+      //std::cout << "gothere3" << std::endl;
+          for (int ii = 0; ii < obs.cols(); ii++) {
+          //cout << obs.size()<< endl;
+          //printDimensions(xx);
+          //std::cout << obs.format(CleanFmt) << sep;
+            //std::cout << "gothere4" << std::endl;
+
+          //Vector delta (xx.block (0, 0, 3, 1) - repulsor.point_);
+          //std::cout << "gothere5" << std::endl;
+          //std::cout << "xx: "<< xx.format(CleanFmt) << std::endl;
+          //std::cout << "xx.new: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+          Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
+          //std::cout << "delta: "<< delta << std::endl;
+          double const dist(delta.norm());
+          // std::cout << "xx"<< xx.size()<< std::endl;
+          // std::cout << "dist: "<< dist << std::endl; 
+          // std::cout << " ii): "<< ii << std::endl; 
+          // std::cout << " obs(2, ii): "<< obs(2, ii) << std::endl; 
+          if ((dist >= obs(2, ii)) || (dist < 1e-9))
+            continue;
+
+          static double const gain(1.0);
+                                                // hardcoded param
+          double const cost(gain * obs(2, ii) * pow(1.0 - dist / obs(2, ii), 3.0) / 3.0); // hardcoded param
+          //std::cout << "delta: = " << delta << sep;
+          delta *= -gain *pow(1.0 - dist / obs(2, ii), 2.0) / dist;                       // hardcoded param
+          nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa); // delta F obslacate close
+        }
+      // Vector delta (xx.block (0, 0, 2, 1) - repulsor.point_);
+      // double const dist (delta.norm());
+      // static double const maxdist (4.0);
+      // if ((dist >= maxdist) || (dist < 1e-9)) {
+      //   	continue;
+      // }
+      // static double const gain (10.0);
+      // double const cost (gain * maxdist * pow (1.0 - dist / maxdist, 3.0) / 3.0);
+      // delta *= - gain * pow (1.0 - dist / maxdist, 2.0) / dist;
+      // nabla_obs.block (iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa);
     }
   }
   
@@ -477,38 +522,77 @@ static void cb_draw ()
   //////////////////////////////////////////////////
   // handles
   
-  for (handle_s ** hh (handle); *hh != 0; ++hh) {
-    gfx::set_pen (1.0, (*hh)->red_, (*hh)->green_, (*hh)->blue_, (*hh)->alpha_);
-    gfx::fill_arc ((*hh)->point_[0], (*hh)->point_[1], (*hh)->radius_, 0.0, 2.0 * M_PI);
+  // for (handle_s ** hh (handle); *hh != 0; ++hh) {
+  //   gfx::set_pen (1.0, (*hh)->red_, (*hh)->green_, (*hh)->blue_, (*hh)->alpha_);
+  //   gfx::fill_arc ((*hh)->point_[0], (*hh)->point_[1], (*hh)->radius_, 0.0, 2.0 * M_PI);
+  // }
+    for (int ii = 0; ii < obs.cols(); ++ii) {
+    gfx::set_pen(1.0, 0.0, 0.0, 1.0, 0.2);
+    gfx::fill_arc(obs(0, ii), obs(1, ii), obs(2, ii), 0.0, 2.0 * M_PI);
   }
 }
-
+void add_obs(double px, double py, double radius)
+{
+  //conservativeResize is used. It's a costy operation, but hopefully will not
+  // be done too often.
+  obs.conservativeResize(obs_dim, obs.cols() + 1);
+  obs.block(0, obs.cols() - 1, obs_dim, 1) << px, py, radius;
+}
 
 static void cb_mouse (double px, double py, int flags)
 {
-  if (flags & gfx::MOUSE_PRESS) {
-    for (handle_s ** hh (handle); *hh != 0; ++hh) {
-      Vector offset ((*hh)->point_);
+  if ((flags & gfx::MOUSE_RELEASE) && (flags & gfx::MOUSE_B3)) {
+    //add new obstacle at that location
+    add_obs(px, py, 2.0);
+  } else if (flags & gfx::MOUSE_PRESS) {
+    for (int ii = 0; ii < obs.cols(); ++ii) {
+      Vector offset(obs.block(0, ii, 2, 1));
       offset[0] -= px;
       offset[1] -= py;
-      if (offset.norm() <= (*hh)->radius_) {
-    	grab_offset = offset;
-    	grabbed = *hh;
-    	break;
+      if (offset.norm() <= obs(2, ii)) { //radius
+        grab_offset = offset;
+        grabbed = ii;
+        state = RUN;
+        break;
       }
     }
-  }
-  else if (flags & gfx::MOUSE_DRAG) {
-    if (0 != grabbed) {
-      grabbed->point_[0] = px;
-      grabbed->point_[1] = py;
-      grabbed->point_ += grab_offset;
+  } else if (flags & gfx::MOUSE_DRAG) {
+    if (-1 != grabbed) {
+      obs(0, grabbed) = px + grab_offset(0);
+      obs(1, grabbed) = py + grab_offset(1);
     }
-  }
-  else if (flags & gfx::MOUSE_RELEASE) {
-    grabbed = 0;
+  } else if (flags & gfx::MOUSE_RELEASE) {
+    grabbed = -1;
+    //state = PAUSE;
   }
 }
+// {
+//   if ((flags & gfx::MOUSE_RELEASE) && (flags & gfx::MOUSE_B3)) {
+//     //add new obstacle at that location
+//     add_obs(px, py, 2.0);
+//   } else if (flags & gfx::MOUSE_PRESS) {
+//     for (handle_s ** hh (handle); *hh != 0; ++hh) {
+//       Vector offset ((*hh)->point_);
+//       offset[0] -= px;
+//       offset[1] -= py;
+//       if (offset.norm() <= (*hh)->radius_) {
+//     	grab_offset = offset;
+//     	grabbed = *hh;
+//     	break;
+//       }
+//     }
+//   }
+//   else if (flags & gfx::MOUSE_DRAG) {
+//     if (0 != grabbed) {
+//       grabbed->point_[0] = px;
+//       grabbed->point_[1] = py;
+//       grabbed->point_ += grab_offset;
+//     }
+//   }
+//   else if (flags & gfx::MOUSE_RELEASE) {
+//     grabbed = 0;
+//   }
+// }
 
 
 int main()
@@ -516,7 +600,8 @@ int main()
   struct timeval tt;
   gettimeofday (&tt, NULL);
   srand (tt.tv_usec);
-  
+  add_obs(3.0, 0.0, 2.0);
+  add_obs(0.0, 3.0, 2.0);
   init_chomp();
   update_robots();  
   state = PAUSE;
