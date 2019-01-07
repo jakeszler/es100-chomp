@@ -1,3 +1,4 @@
+
 Trials with CHOMP
 =================
 
@@ -17,3 +18,6 @@ As the name implies, this is based on [CHOMP][].
 [Eigen]: http://eigen.tuxfamily.org/
 [GTK+]: http://www.gtk.org/
 [CHOMP]: http://www.nathanratliff.com/research/chomp
+=======
+# es100-chomp
+fpga acceleration of chomp algorithm
