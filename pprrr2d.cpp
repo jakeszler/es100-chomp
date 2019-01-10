@@ -68,6 +68,8 @@
       #include <termios.h> /* POSIX Terminal Control Definitions */
       #include <unistd.h>  /* UNIX Standard Definitions      */ 
       #include <errno.h>   /* ERROR Number Definitions           */
+#define INTMATH 1
+#define loopcountvar 1000
 
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
@@ -290,7 +292,7 @@ vector <Robot> robots;
 
 static void update_robots ()
 {
-   if(countvar < 100){
+   if(countvar < loopcountvar){
     auto start = std::chrono::high_resolution_clock::now();
 
   rstart.update (qs);
@@ -427,7 +429,7 @@ static void cb_idle ()
   
   //////////////////////////////////////////////////
   // beginning of "the" CHOMP iteration
-  if(countvar < 100){
+  if(countvar < loopcountvar){
   auto start = std::chrono::high_resolution_clock::now();
 
   Vector nabla_smooth ((AA * xi + bb));
@@ -451,7 +453,10 @@ static void cb_idle ()
   //   {
   //       std::cout << arr[i] << " ";
   //   }
-
+  #ifdef INTMATH
+    obs2 = (obs *1000).cast<int>();
+  #endif  
+  
   for (int p = nq-1; -1 < p; --p) {
     int iq = arr[p];
     Vector qd;
@@ -470,19 +475,25 @@ static void cb_idle ()
     }
 
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
+
       Vector const xx (robots[iq].frame(ib).translation());
+
+      Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
+      
+    
+      #ifdef INTMATH
       Eigen::VectorXi const xx2 ((xx*scale).cast<int>());
      
       //std::cout << "xx2 "<<  xx2.rows() << "x" << xx2.cols() << xx2 << std::endl;
-      Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
       Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
       //std::cout << "JJ2 "<< JJ2.rows() << "x" << JJ2.cols() << std::endl;
-      Vector const xd (JJ * qd);
-      Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
+       Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
-
-      double const vel (xd.norm());//xd.norm());
       double const vel2 ((xd2.norm()));
+      #else
+      Vector const xd (JJ * qd);
+      double const vel (xd.norm());//xd.norm());
+      #endif
 
       // Eigen::VectorXi matA(2, 1);
       // matA << 70000, 70000;
@@ -493,33 +504,32 @@ static void cb_idle ()
        // std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
        // std::cout << "vel "<<vel << std::endl;
        // std::cout << "vel2 "<<vel2 << std::endl;
-      
-      if (vel < 1.0e-3|| vel2 < 2) {	// avoid div by zero further down
-	     continue;
-      }
 
 
-        //std::cout << "gothere2 " << std::endl;
-      Vector const  xdn (xd / vel);
-
+      #ifdef INTMATH
+      if (vel2 < 2)  // avoid div by zero further down
+        continue;
       Eigen::VectorXi const xdn2 ((xd2 * scale)/ vel2);
-
-      Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
       Eigen::VectorXi const xdd2 (JJ2 * xidd2.block (iq * cdim, 0, cdim , 1) );
-     
-
-      Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
-
       Eigen::MatrixXi const prj2 ((scale*Eigen::MatrixXi::Identity (2, 2)) - (xdn2 * xdn2.transpose()/scale));
-      //Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
-      //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
-
-       
-
       //Eigen::VectorXi const kappa2 ((prj2 * xdd2 / (pow(vel2, 2)))); // / pow(vel2, 2)
-     
       //std::cout << "kappa2 "<< kappa2.format(CleanFmt) << std::endl;
-          for (int ii = 0; ii < obs.cols(); ii++) {
+      auto temp =obs2;
+      #else
+      if (vel < 1.0e-3)
+        continue;
+      Vector const  xdn (xd / vel);
+      Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
+      Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
+        //Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
+      //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
+      auto temp =obs;
+      #endif
+      
+
+     
+          
+          for (int ii = 0; ii < temp.cols(); ii++) {
           //cout << obs.size()<< endl;
           //printDimensions(xx);
           //std::cout << obs.format(CleanFmt) << sep;
@@ -529,46 +539,45 @@ static void cb_idle ()
           //std::cout << "gothere5" << std::endl;
           //std::cout << "xx: "<< xx.format(CleanFmt) << std::endl;
           //std::cout << "xx.new: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
-          obs2 = (obs *1000).cast<int>();
+          
+          #ifdef INTMATH
+            Eigen::VectorXi delta2(xx2.block (0, 0, 2, 1) - obs2.block(0, ii, 2, 1));
+            int const dist2(delta2.norm());
+            if ((dist2 >= obs2(2, ii)) || (dist2 < 1))
+              continue;
+            static int const gain2(1);
+            //int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
+            //(gain2 * obs2(2, ii))/scale * 
+            int temp2 = -gain2 *pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
+            delta2 *= temp2;
+            delta2 /=scale; 
+            nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale; // /scale)
 
-          Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
-          Eigen::VectorXi delta2(xx2.block (0, 0, 2, 1) - obs2.block(0, ii, 2, 1));
+          #else
+            Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
+            //std::cout << "delta: = " << delta << sep;
+            double const dist(delta.norm());
+            if ((dist >= obs(2, ii)) || (dist < 1e-9))
+              continue;
+            static double const gain(1.0);
+            double temp = -gain *pow(1.0 - dist /obs(2, ii), 2.0);// / dist;
+            //double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
+            //gain * obs(2, ii) *
+            //std::cout << "delta old "<< delta.format(CleanFmt) << std::endl;
+            //std::cout << "delta2 old"<< delta2.format(CleanFmt) << std::endl;
+            delta *=  temp;
+            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta) ); // delta F obslacate close
+            //- (cost2 * kappa2/scale)
+          #endif
 
           //std::cout << "delta: "<< delta << std::endl;
-          double const dist(delta.norm());
-          int const dist2(delta2.norm());
           // std::cout << "xx"<< xx.size()<< std::endl;
-          // std::cout << "dist: "<< dist << std::endl; 
+           //std::cout << "dist: "<< dist << std::endl; 
+           //std::cout << "dist2: "<< dist2 << std::endl; 
           // std::cout << " ii): "<< ii << std::endl; 
-          // std::cout << " obs(2, ii): "<< obs(2, ii) << std::endl; 
-          if ((dist >= obs(2, ii)) || (dist < 1e-9))
-            continue;
+           //std::cout << " obs(2, ii): "<< obs(2, ii) << std::endl; 
+           // std::cout << " obs(2, ii): "<< obs2(2, ii) << std::endl; 
 
-          static double const gain(1.0);
-
-          static int const gain2(1);
-                                                // hardcoded param
-          double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
-          //gain * obs(2, ii) * 
-          //std::cout << "delta: = " << delta << sep;
-          //int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
-            //(gain2 * obs2(2, ii))/scale * 
-          double temp = -gain *pow(1.0 - dist /obs(2, ii), 2.0);// / dist;
-         
-
-          int temp2 = -gain2 *pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
-          
-          //std::cout << "delta old "<< delta.format(CleanFmt) << std::endl;
-          //std::cout << "delta2 old"<< delta2.format(CleanFmt) << std::endl;
-          delta *=  temp;
-          delta2 *= temp2;
-          delta2 /=scale; 
-
-                  // hardcoded param
-          //nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta) ); // delta F obslacate close
-        
-          nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale; // /scale)
-          //- (cost2 * kappa2/scale)
           // std::cout << "cost "<< cost << std::endl;
              // std::cout << "delta "<< delta.format(CleanFmt) << std::endl;
              // std::cout << "delta2 "<< delta2.format(CleanFmt) << std::endl;
@@ -587,18 +596,17 @@ static void cb_idle ()
           //std::cout << "test "<< test << std::endl;
 
               if (globalflag <0){
-        
-              std::cout << "xd"<<xd.format(CleanFmt) << std::endl;
-              std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
-              std::cout << "vel "<<vel << std::endl;
-              std::cout << "vel2 "<<vel2 << std::endl;
-              std::cout << "xdn "<<xdn.format(CleanFmt) << std::endl;
-              //std::cout << "xdn2 "<<xdn2.format(CleanFmt) << std::endl;
-              std::cout << "xdd "<<xdd.format(CleanFmt) << std::endl;
-              //std::cout << "xdd2 "<<xdd2.format(CleanFmt) << std::endl;
-              std::cout << "xxb: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
-              //std::cout << "xx2b: "<< xx2.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
-              std::cout << "prj "<< prj.format(CleanFmt) << std::endl;
+                    // std::cout << "xd"<<xd.format(CleanFmt) << std::endl;
+                    // std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
+                    // std::cout << "vel "<<vel << std::endl;
+                    // std::cout << "vel2 "<<vel2 << std::endl;
+                    // std::cout << "xdn "<<xdn.format(CleanFmt) << std::endl;
+                    // //std::cout << "xdn2 "<<xdn2.format(CleanFmt) << std::endl;
+                    // std::cout << "xdd "<<xdd.format(CleanFmt) << std::endl;
+                    // //std::cout << "xdd2 "<<xdd2.format(CleanFmt) << std::endl;
+                    // std::cout << "xxb: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+                    // //std::cout << "xx2b: "<< xx2.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+                    // std::cout << "prj "<< prj.format(CleanFmt) << std::endl;
               //std::cout << "prj2 "<< prj2.format(CleanFmt) << std::endl;
               //std::cout << "kappa "<< kappa.format(CleanFmt) << std::endl;
              // std::cout << "kappa2 "<< kappa2.format(CleanFmt) << std::endl;
@@ -633,18 +641,20 @@ static void cb_idle ()
 
   }
   
-  //Vector dxi (Ainv * ( nabla_obs + lambda *nabla_smooth)); //
+
+  
+  #ifdef INTMATH
   Vector dxi2 ((Ainv * ((nabla_obs2.cast<double>()/(scale*scale)) + lambda * nabla_smooth))); //
-
-
-  //std::cout << "dxi "<< (dxi/eta).format(CleanFmt) << std::endl;
-  //std::cout << "dxi2 "<< ((dxi2.cast<double>()/1000.0)/eta).format(CleanFmt) << std::endl;
-  
-  //std::cout << "dxi "<< dxi.format(CleanFmt) << std::endl;
-  //std::cout << "dxi2 "<< dxi2.format(CleanFmt) << std::endl;
-  
-
   xi -= dxi2 / eta;
+  //std::cout << "dxi2 "<< dxi2.format(CleanFmt) << std::endl;
+  //std::cout << "dxi2 "<< ((dxi2.cast<double>()/1000.0)/eta).format(CleanFmt) << std::endl;
+  #else
+  Vector dxi (Ainv * ( nabla_obs + lambda *nabla_smooth)); //
+  //std::cout << "dxi "<< (dxi/eta).format(CleanFmt) << std::endl;
+  //std::cout << "dxi "<< dxi.format(CleanFmt) << std::endl;
+  xi -= dxi / eta;
+  #endif
+
   //xi2 -= ((dxi2.cast<int>())/1000.0)/eta2;
   
   // end of "the" CHOMP iteration
@@ -656,7 +666,7 @@ auto finish = std::chrono::high_resolution_clock::now();
   countvar++;
   }
   else{
-    std::cout << "Elapsed time: " << elapsed.count()/100 << " s\n";
+    std::cout << "Elapsed time: " << elapsed.count()/countvar << " s\n";
     elapsed = std::chrono::seconds { 0 };
     countvar = 0;
   }
