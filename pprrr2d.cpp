@@ -57,12 +57,23 @@
 #include <err.h>
 #include <chrono>
 
+#include <SerialPort.h>
+#include <SerialStream.h>
+#include <cstdlib>
+#include <fstream>
+#include <unistd.h>
+
+#include <stdio.h>
+      #include <fcntl.h>   /* File Control Definitions           */
+      #include <termios.h> /* POSIX Terminal Control Definitions */
+      #include <unistd.h>  /* UNIX Standard Definitions      */ 
+      #include <errno.h>   /* ERROR Number Definitions           */
+
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
 typedef Eigen::Isometry3d Transform;
 
 using namespace std;
-
 Eigen::IOFormat CleanFmt(2, 0, ", ", "\n", "[", "]");
 
 //////////////////////////////////////////////////
@@ -71,48 +82,43 @@ Eigen::IOFormat CleanFmt(2, 0, ", ", "\n", "[", "]");
 Vector xi;			// the trajectory (q_1, q_2, ...q_n)
 Vector qs;			// the start config a.k.a. q_0
 Vector qe;			// the end config a.k.a. q_(n+1)
+Eigen::VectorXi xi2;
+Eigen::VectorXi qs2;
+Eigen::VectorXi qe2;
+
 static size_t const obs_dim(3); // x,y,R
-static size_t const nq (20);	// number of q stacked into xi
+static size_t const nq (25);	// number of q stacked into xi
 static size_t const cdim (5);	// dimension of config space
 static size_t const xidim (nq * cdim); // dimension of trajectory, xidim = nq * cdim
 static double const dt (1.0);	       // time step
 static double const eta (100.0); // >= 1, regularization factor for gradient descent
 static double const lambda (1.0); // weight of smoothness objective
-
+static int const dt2 (1);        // time step
+static int const eta2 (100); // >= 1, regularization factor for gradient descent
+static int const lambda2 (1); // weight of smoothness objective
+static int const scale(1e3);
+int globalflag(0);
 //////////////////////////////////////////////////
 // gradient descent etc
 
 Matrix AA;			// metric
-Vector bb;			// acceleration bias for start and end config
+Vector  bb;			// acceleration bias for start and end config
 Matrix Ainv;			// inverse of AA
 Matrix obs;                     // Matrix containninging all obstacles, each column is (x,y,R) of the obstacle
+
+Eigen::MatrixXi AA2;
+Eigen::VectorXi bb2;
+Eigen::MatrixXi Ainv2;
+//Matrix Ainv2;
+Eigen::MatrixXi obs2;
+
 
 //////////////////////////////////////////////////
 // gui stuff
 
 enum { PAUSE, STEP, RUN } state;
 
-// struct handle_s {
-//   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  
-//   handle_s (double radius, double red, double green, double blue, double alpha)
-//     : point_(2),
-//       radius_(radius),
-//       red_(red),
-//       green_(green),
-//       blue_(blue),
-//       alpha_(alpha)
-//   {
-//   }
-  
-//   Vector point_;
-//   double radius_, red_, green_, blue_, alpha_;
-// };
 
-// static handle_s repulsor (1.5, 0.0, 0.0, 1.0, 0.2);
-
-//static handle_s * handle[] = { &repulsor, 0 };
-//static handle_s * grabbed (0);
 static Vector grab_offset (3);
 static int grabbed(-1);
 int countvar = 0;
@@ -296,7 +302,7 @@ static void update_robots ()
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
   }
     auto finish = std::chrono::high_resolution_clock::now();
-    elapsed+= finish - start;
+    elapsed= finish - start;
 //std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   //countvar++;
   }
@@ -315,12 +321,18 @@ static void init_chomp ()
   xi = Vector::Zero (xidim);
   qe.resize (5);
   qe << 7.0, 7.0, -M_PI/2, -M_PI/2, M_PI/2;
+
+  qs2.resize (5);
+  qs2 << -5*scale, -5*scale, (M_PI/2)*scale, (M_PI/2)*scale, -(M_PI/2)*scale;
+  xi2 = Eigen::VectorXi::Zero (xidim);
+  qe2.resize (5);
+  qe2 << 7*scale, 7*scale, -(M_PI/2)*scale, -(M_PI/2)*scale, (M_PI/2)*scale; //might have issue with cast to int
   
   //repulsor.point_ << 6.0, 3.0;
   
-  // cout << "qs\n" << qs
-  //      << "\nxi\n" << xi
-  //      << "\nqe\n" << qe << "\n\n";
+  // cout << "qs\n" << qs2
+  //      << "\nxi\n" << xi2
+  //      << "\nqe\n" << qe2 << "\n\n";
   
   AA = Matrix::Zero (xidim, xidim);
   for (size_t ii(0); ii < nq; ++ii) {
@@ -331,19 +343,42 @@ static void init_chomp ()
     }
   }
   AA /= dt * dt * (nq + 1);
-  
+  //std::cout << AA.format(CleanFmt) << std::endl;
+
+  AA2 = Eigen::MatrixXi::Zero (xidim, xidim);
+  for (size_t ii(0); ii < nq; ++ii) {
+    AA2.block (cdim * ii, cdim * ii, cdim , cdim) = 2 * Eigen::MatrixXi::Identity (cdim, cdim);
+    if (ii > 0) {
+      AA2.block (cdim * (ii-1), cdim * ii, cdim , cdim) = -1 * Eigen::MatrixXi::Identity (cdim, cdim);
+      AA2.block (cdim * ii, cdim * (ii-1), cdim , cdim) = -1 * Eigen::MatrixXi::Identity (cdim, cdim);
+    }
+  }
+  AA2 = AA2 *scale;
+  AA2 /= dt2 * dt2 * (nq + 1);
+
+
+
   bb = Vector::Zero (xidim);
   bb.block (0,            0, cdim, 1) = qs;
   bb.block (xidim - cdim, 0, cdim, 1) = qe;
   bb /= - dt * dt * (nq + 1);
-  
+  //std::cout << bb.format(CleanFmt) << std::endl;
+  bb2 = Eigen::VectorXi::Zero (xidim);
+  bb2.block (0,            0, cdim, 1) = qs2;
+  bb2.block (xidim - cdim, 0, cdim, 1) = qe2;
+  bb2 /= - (dt2 * dt2 * (nq + 1));
+  //std::cout << bb2.format(CleanFmt) << std::endl;
   // not needed anyhow
   // double cc (double (qs.transpose() * qs) + double (qe.transpose() * qe));
   // cc /= dt * dt * (nq + 1);
     //std::cout << AA.format(CleanFmt) << std::endl;
     //std::cout << "The matrix m is of size " << AA.rows() << "x" << AA.cols() << std::endl; 
   Ainv = AA.inverse();
-  
+  //std::cout << Ainv.format(CleanFmt) << std::endl;
+  Ainv2 = (AA.inverse()*scale).cast<int>();
+
+  //std::cout << Ainv2.format(CleanFmt) << std::endl;
+
   // cout << "AA\n" << AA
   //      << "\nAinv\n" << Ainv
   //      << "\nbb\n" << bb << "\n\n";
@@ -395,10 +430,15 @@ static void cb_idle ()
   if(countvar < 100){
   auto start = std::chrono::high_resolution_clock::now();
 
-  Vector nabla_smooth (AA * xi + bb);
+  Vector nabla_smooth ((AA * xi + bb));
+  //std::cout << nabla_smooth.format(CleanFmt) << std::endl;
+  Eigen::VectorXi nabla_smooth2 (((AA * xi + bb)*scale*scale).cast<int>());
+  //std::cout << nabla_smooth2.format(CleanFmt) << std::endl;
   Vector const & xidd (nabla_smooth); // indeed, it is the same in this formulation...
-  
+  Eigen::VectorXi const & xidd2 (nabla_smooth2);
+
   Vector nabla_obs (Vector::Zero (xidim));
+  Eigen::VectorXi nabla_obs2 (Eigen::VectorXi::Zero (xidim));
   //#pragma omp parallel for
   int arr[nq];
   for (int i=0; i < nq; i++)
@@ -415,29 +455,70 @@ static void cb_idle ()
   for (int p = nq-1; -1 < p; --p) {
     int iq = arr[p];
     Vector qd;
+    Eigen::VectorXi qd2;
     if (iq == nq - 1) {
       qd = qe - xi.block (iq * cdim, 0, cdim, 1);
+      qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
+
+      // std::cout << qd.format(CleanFmt) << std::endl;
+      // std::cout << qd2.format(CleanFmt) << std::endl;
     }
     else {
       qd = xi.block ((iq+1) * cdim, 0, cdim, 1) - xi.block (iq * cdim, 0, cdim, 1);
+      qd2 = (xi.block ((iq+1) * cdim, 0, cdim, 1)*scale).cast<int>() - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>();
+      
     }
+
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
       Vector const xx (robots[iq].frame(ib).translation());
-      //std::cout << xx << std::endl;
+      Eigen::VectorXi const xx2 ((xx*scale).cast<int>());
+     
+      //std::cout << "xx2 "<<  xx2.rows() << "x" << xx2.cols() << xx2 << std::endl;
       Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
-       //std::cout << JJ.format(CleanFmt) << std::endl;
-      //std::cout << "The matrix m is of size " << JJ.rows() << "x" << JJ.cols() << std::endl; 
-      
+      Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
+      //std::cout << "JJ2 "<< JJ2.rows() << "x" << JJ2.cols() << std::endl;
       Vector const xd (JJ * qd);
-      double const vel (xd.norm());
-      if (vel < 1.0e-3) {	// avoid div by zero further down
+      Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
+      //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
+
+      double const vel (xd.norm());//xd.norm());
+      double const vel2 ((xd2.norm()));
+
+      // Eigen::VectorXi matA(2, 1);
+      // matA << 70000, 70000;
+      // int const testvala (matA.dot(matA));
+      // std::cout << "matA"<<  matA.format(CleanFmt)<< std::endl;
+      // std::cout << "test"<< testvala<< std::endl;
+       // std::cout << "xd"<<xd.format(CleanFmt) << std::endl;
+       // std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
+       // std::cout << "vel "<<vel << std::endl;
+       // std::cout << "vel2 "<<vel2 << std::endl;
+      
+      if (vel < 1.0e-3|| vel2 < 2) {	// avoid div by zero further down
 	     continue;
       }
+
+
         //std::cout << "gothere2 " << std::endl;
-      Vector const xdn (xd / vel);
+      Vector const  xdn (xd / vel);
+
+      Eigen::VectorXi const xdn2 ((xd2 * scale)/ vel2);
+
       Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
+      Eigen::VectorXi const xdd2 (JJ2 * xidd2.block (iq * cdim, 0, cdim , 1) );
+     
+
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
-      Vector const kappa (prj * xdd / pow (vel, 2.0));
+
+      Eigen::MatrixXi const prj2 ((scale*Eigen::MatrixXi::Identity (2, 2)) - (xdn2 * xdn2.transpose()/scale));
+      //Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
+      //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
+
+       
+
+      //Eigen::VectorXi const kappa2 ((prj2 * xdd2 / (pow(vel2, 2)))); // / pow(vel2, 2)
+     
+      //std::cout << "kappa2 "<< kappa2.format(CleanFmt) << std::endl;
           for (int ii = 0; ii < obs.cols(); ii++) {
           //cout << obs.size()<< endl;
           //printDimensions(xx);
@@ -448,22 +529,94 @@ static void cb_idle ()
           //std::cout << "gothere5" << std::endl;
           //std::cout << "xx: "<< xx.format(CleanFmt) << std::endl;
           //std::cout << "xx.new: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+          obs2 = (obs *1000).cast<int>();
+
           Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
+          Eigen::VectorXi delta2(xx2.block (0, 0, 2, 1) - obs2.block(0, ii, 2, 1));
+
           //std::cout << "delta: "<< delta << std::endl;
           double const dist(delta.norm());
+          int const dist2(delta2.norm());
           // std::cout << "xx"<< xx.size()<< std::endl;
           // std::cout << "dist: "<< dist << std::endl; 
           // std::cout << " ii): "<< ii << std::endl; 
           // std::cout << " obs(2, ii): "<< obs(2, ii) << std::endl; 
-          if ((dist >= obs(2, ii))*2 || (dist < 1e-9))
+          if ((dist >= obs(2, ii)) || (dist < 1e-9))
             continue;
 
           static double const gain(1.0);
+
+          static int const gain2(1);
                                                 // hardcoded param
-          double const cost(gain * obs(2, ii) * pow(1.0 - dist / obs(2, ii), 3.0) / 3.0); // hardcoded param
+          double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
+          //gain * obs(2, ii) * 
           //std::cout << "delta: = " << delta << sep;
-          delta *= -gain *pow(1.0 - dist / obs(2, ii), 2.0) / dist;                       // hardcoded param
-          nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * (prj * delta - cost * kappa); // delta F obslacate close
+          //int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
+            //(gain2 * obs2(2, ii))/scale * 
+          double temp = -gain *pow(1.0 - dist /obs(2, ii), 2.0);// / dist;
+         
+
+          int temp2 = -gain2 *pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
+          
+          //std::cout << "delta old "<< delta.format(CleanFmt) << std::endl;
+          //std::cout << "delta2 old"<< delta2.format(CleanFmt) << std::endl;
+          delta *=  temp;
+          delta2 *= temp2;
+          delta2 /=scale; 
+
+                  // hardcoded param
+          //nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta) ); // delta F obslacate close
+        
+          nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale; // /scale)
+          //- (cost2 * kappa2/scale)
+          // std::cout << "cost "<< cost << std::endl;
+             // std::cout << "delta "<< delta.format(CleanFmt) << std::endl;
+             // std::cout << "delta2 "<< delta2.format(CleanFmt) << std::endl;
+             // std::cout << "temp "<< temp << std::endl;
+             // std::cout << "temp2 "<< temp2 << std::endl;
+            
+             // std::cout << "dist "<< dist << std::endl;
+             // std::cout << "dist2 "<< dist2 << std::endl;
+                   // std::cout << "nabla_smooth "<< nabla_smooth << std::endl;
+                   // std::cout << "nabla_smooth2 "<< nabla_smooth2 << std::endl;
+                   //  std::cout << "nabla_obs "<< nabla_obs << std::endl;
+                   // std::cout << "nabla_obs2 "<< nabla_obs2 << std::endl;
+           //std::cout << "cost2 "<< cost2 << std::endl;
+           //std::cout << "obs  "<<obs(2, ii) << std::endl;
+           //std::cout << "obs2  "<<obs2(2, ii) << std::endl;
+          //std::cout << "test "<< test << std::endl;
+
+              if (globalflag <0){
+        
+              std::cout << "xd"<<xd.format(CleanFmt) << std::endl;
+              std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
+              std::cout << "vel "<<vel << std::endl;
+              std::cout << "vel2 "<<vel2 << std::endl;
+              std::cout << "xdn "<<xdn.format(CleanFmt) << std::endl;
+              //std::cout << "xdn2 "<<xdn2.format(CleanFmt) << std::endl;
+              std::cout << "xdd "<<xdd.format(CleanFmt) << std::endl;
+              //std::cout << "xdd2 "<<xdd2.format(CleanFmt) << std::endl;
+              std::cout << "xxb: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+              //std::cout << "xx2b: "<< xx2.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+              std::cout << "prj "<< prj.format(CleanFmt) << std::endl;
+              //std::cout << "prj2 "<< prj2.format(CleanFmt) << std::endl;
+              //std::cout << "kappa "<< kappa.format(CleanFmt) << std::endl;
+             // std::cout << "kappa2 "<< kappa2.format(CleanFmt) << std::endl;
+             // std::cout << "obs  "<<obs(2, ii) << std::endl;
+            // std::cout << "obs2  "<<obs2(2, ii) << std::endl;
+              // std::cout << "deltanew "<< delta.format(CleanFmt) << std::endl;
+              // std::cout << "delta2new "<< delta2.format(CleanFmt) << std::endl;
+              // std::cout << "dist "<< dist << std::endl;
+              // std::cout << "dist2 "<< dist2 << std::endl;
+              // std::cout << "cost "<< cost << std::endl;
+              // std::cout << "cost2 "<< cost2 << std::endl;
+              // std::cout << "temp "<< temp << std::endl;
+              // std::cout << "temp2 "<< temp2 << std::endl;
+              //std::cout << "nabla_obs "<< nabla_obs.format(CleanFmt) << std::endl;
+              //std::cout << "nabla_obs2 "<< nabla_obs2.format(CleanFmt) << std::endl;
+
+            globalflag +=1;
+            }
         }
          
       // Vector delta (xx.block (0, 0, 2, 1) - repulsor.point_);
@@ -480,8 +633,19 @@ static void cb_idle ()
 
   }
   
-  Vector dxi (Ainv * (nabla_obs + lambda * nabla_smooth));
-  xi -= dxi / eta;
+  //Vector dxi (Ainv * ( nabla_obs + lambda *nabla_smooth)); //
+  Vector dxi2 ((Ainv * ((nabla_obs2.cast<double>()/(scale*scale)) + lambda * nabla_smooth))); //
+
+
+  //std::cout << "dxi "<< (dxi/eta).format(CleanFmt) << std::endl;
+  //std::cout << "dxi2 "<< ((dxi2.cast<double>()/1000.0)/eta).format(CleanFmt) << std::endl;
+  
+  //std::cout << "dxi "<< dxi.format(CleanFmt) << std::endl;
+  //std::cout << "dxi2 "<< dxi2.format(CleanFmt) << std::endl;
+  
+
+  xi -= dxi2 / eta;
+  //xi2 -= ((dxi2.cast<int>())/1000.0)/eta2;
   
   // end of "the" CHOMP iteration
   //////////////////////////////////////////////////
@@ -637,6 +801,87 @@ int main()
    gettimeofday (&tt, NULL);
    srand (tt.tv_usec);
 
+            //    int fd;
+            //    fd = open("/dev/ttyACM0",O_RDWR | O_NOCTTY );  //
+            //    if(fd == -1)           /* Error Checking */
+            //                  printf("\n  Error! in Opening ttyACM1  ");
+            //           else
+            //                  printf("\n  ttyACM0 Opened Successfully ");
+
+            //       struct termios SerialPortSettings;  /* Create the structure                          */
+
+            //     tcgetattr(fd, &SerialPortSettings); /* Get the current attributes of the Serial port */
+
+            //     /* Setting the Baud rate */ //B230400
+            //     cfsetispeed(&SerialPortSettings,B9600); /* Set Read  Speed as 9600                       */
+            //     cfsetospeed(&SerialPortSettings,B9600); // Set Write Speed as 9600
+                
+            //     SerialPortSettings.c_cflag &= ~PARENB;   /* Disables the Parity Enable bit(PARENB),So No Parity   */
+            //     SerialPortSettings.c_cflag &= ~CSTOPB;   /* CSTOPB = 2 Stop bits,here it is cleared so 1 Stop bit */
+            //     SerialPortSettings.c_cflag &= ~CSIZE;  /* Clears the mask for setting the data size             */
+            //     SerialPortSettings.c_cflag |=  CS8;      /* Set the data bits = 8                                 */
+            //     SerialPortSettings.c_cflag &= ~CRTSCTS;       /* No Hardware flow Control                         */
+            //     SerialPortSettings.c_cflag |= CREAD | CLOCAL; /* Enable receiver,Ignore Modem Control lines       */ 
+            //     SerialPortSettings.c_iflag &= ~(IXON | IXOFF | IXANY);          /* Disable XON/XOFF flow control both i/p and o/p */
+            //     SerialPortSettings.c_iflag &= ~(ICANON | ECHO | ECHOE | ISIG);  /* Non Cannonical mode                            */
+            //     SerialPortSettings.c_oflag &= ~OPOST;/*No Output Processing*/
+            //     /* Setting Time outs */
+            //     SerialPortSettings.c_cc[VMIN] = 5; /* Read at least 10 characters */
+            //     SerialPortSettings.c_cc[VTIME] = 0; /* Wait indefinetly   */
+
+
+            //     if((tcsetattr(fd,TCSANOW,&SerialPortSettings)) != 0) /* Set the attributes to the termios structure*/
+            //         printf("\n  ERROR ! in Setting attributes");
+            //     else
+            //         printf("\n  BaudRate = 115200 \n  StopBits = 1 \n  Parity   = none");
+                  
+            //           /*------------------------------- Read data from serial port -----------------------------*/
+            //     char write_buffer[] = "h";  /* Buffer containing characters to write into port       */ 
+            //     int  bytes_written  = 0;    /* Value for storing the number of bytes written to the port */ 
+            //     tcflush(fd, TCIFLUSH);    Discards old data in the rx buffer            
+
+            //     char read_buffer[14];   /* Buffer to store the data received              */
+            //     int  bytes_read = 0;    /* Number of bytes read by the read() system call */
+            //     int i = 0;
+                
+            //     while(true){
+            //     //for(int i =0; i<100; i++)
+            //     //{
+            //       auto start = std::chrono::high_resolution_clock::now();
+            //     bytes_written = write(fd,
+            //     "habhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhab"
+            //     ,90);
+            //     //"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+            //     //, 96*8);//fd,write_buffer,sizeof(write_buffer));
+            //     //}
+            //     //std::string   
+            //     //byte[] MyMessage = System.Text.Encoding.UTF8.getBytes(yourString);
+
+            //     //MySerialPort.Write(MyMessage,0,MyMessage.Length);
+
+
+            //         bytes_read = read(fd,&read_buffer,14); /* Read the data                   */
+            //     auto finish = std::chrono::high_resolution_clock::now();
+            //     elapsed = finish - start;
+            //     std::cout << "time:  " << elapsed.count() << endl;
+            //     elapsed = std::chrono::seconds { 0 };
+
+            //     if ( bytes_read < 0 )
+            // {
+            // cout << "Error " << errno << " opening " << "/dev/ttyUSB0" << ": " << strerror (errno) << endl;
+            // }
+            //     printf("\n  %s written to ttyUSB0",write_buffer);
+            //     printf("\n  %d Bytes written to ttyUSB0", bytes_written);  
+            //     printf("\n\n  Bytes Rxed :%d", bytes_read); /* Print the number of bytes read */
+            //     printf("\n\n  ");
+
+            //       printf("a");
+            //     for(i=0;i<bytes_read;i++)  /*printing only the received characters*/
+            //         printf("%c",read_buffer[i]);
+            //       printf("a ");
+            //     printf("\n +----------------------------------+\n\n\n");
+            // }
+            //     close(fd); /* Close the serial port */                                  
    // int x =10;
    // int y =10;
    // int A[x][y];
@@ -693,6 +938,7 @@ int main()
     // auto finish = std::chrono::high_resolution_clock::now();
     // std::chrono::duration<double> elapsed = finish - start;
     // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+  
   add_obs(3.0, 0.0, 2.0);
   add_obs(0.0, 3.0, 2.0);
   init_chomp();
@@ -703,4 +949,6 @@ int main()
   gfx::add_button ("step", cb_step);
   gfx::add_button ("run", cb_run);
   gfx::main ("chomp", cb_idle, cb_draw, cb_mouse);
+
+
 }
