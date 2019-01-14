@@ -1,4 +1,4 @@
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fopenmp")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fopenmp  -I/usr/include -L/usr/lib/x86_64-linux-gnu -L/usr/local/lib -lserial  -lpthread")
 
 cmake_minimum_required (VERSION 2.6)
 if (COMMAND cmake_policy)

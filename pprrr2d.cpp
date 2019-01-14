@@ -56,18 +56,23 @@
 #include <sys/time.h>
 #include <err.h>
 #include <chrono>
+#include <stdlib.h>
 
 #include <SerialPort.h>
 #include <SerialStream.h>
 #include <cstdlib>
 #include <fstream>
 #include <unistd.h>
+#include <sys/poll.h>
 
 #include <stdio.h>
       #include <fcntl.h>   /* File Control Definitions           */
       #include <termios.h> /* POSIX Terminal Control Definitions */
       #include <unistd.h>  /* UNIX Standard Definitions      */ 
       #include <errno.h>   /* ERROR Number Definitions           */
+
+       #include <arpa/inet.h>
+
 #define INTMATH 1
 #define loopcountvar 1000
 
@@ -287,13 +292,28 @@ Robot rstart;
 Robot rend;
 vector <Robot> robots;
 
+#define VAR_TO_STR_BIN(x) obj_to_bin((char [sizeof(x)*CHAR_BIT + 1]){""}, &(x), sizeof (x))
 
+char *obj_to_bin(char *dest, void *object, size_t osize) {
+  const unsigned char *p = (const unsigned char *) object;
+  p += osize;
+  char *s = dest;
+  while (osize-- > 0) {
+    p--;
+    unsigned i = CHAR_BIT;
+    while (i-- > 0) {
+      *s++ = ((*p >> i) & 1) + '0';
+    }
+  }
+  *s = '\0';
+  return dest;
+}
 //////////////////////////////////////////////////
 
 static void update_robots ()
 {
-   if(countvar < loopcountvar){
-    auto start = std::chrono::high_resolution_clock::now();
+   //if(countvar < loopcountvar){
+    //auto start = std::chrono::high_resolution_clock::now();
 
   rstart.update (qs);
   rend.update (qe);
@@ -303,16 +323,16 @@ static void update_robots ()
   for (size_t ii (0); ii < nq; ++ii) {
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
   }
-    auto finish = std::chrono::high_resolution_clock::now();
-    elapsed= finish - start;
+    //auto finish = std::chrono::high_resolution_clock::now();
+    //elapsed= finish - start;
 //std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   //countvar++;
-  }
-  else{
-    //std::cout << "Elapsed time: " << elapsed.count()/100 << " s\n";
-    elapsed = std::chrono::seconds { 0 };
-    countvar = 0;
-  }
+  //}
+  // else{
+  //   //std::cout << "Elapsed time: " << elapsed.count()/100 << " s\n";
+  //   elapsed = std::chrono::seconds { 0 };
+  //   countvar = 0;
+  // }
 }
 
 
@@ -430,7 +450,6 @@ static void cb_idle ()
   //////////////////////////////////////////////////
   // beginning of "the" CHOMP iteration
   if(countvar < loopcountvar){
-  auto start = std::chrono::high_resolution_clock::now();
 
   Vector nabla_smooth ((AA * xi + bb));
   //std::cout << nabla_smooth.format(CleanFmt) << std::endl;
@@ -456,7 +475,11 @@ static void cb_idle ()
   #ifdef INTMATH
     obs2 = (obs *1000).cast<int>();
   #endif  
-  
+  //std::cout << "---------" << std::endl;
+
+  //std::cout << bb.format(CleanFmt) << std::endl;
+  auto start = std::chrono::high_resolution_clock::now();
+
   for (int p = nq-1; -1 < p; --p) {
     int iq = arr[p];
     Vector qd;
@@ -479,16 +502,37 @@ static void cb_idle ()
       Vector const xx (robots[iq].frame(ib).translation());
 
       Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
-      
-    
+
       #ifdef INTMATH
       Eigen::VectorXi const xx2 ((xx*scale).cast<int>());
      
       //std::cout << "xx2 "<<  xx2.rows() << "x" << xx2.cols() << xx2 << std::endl;
       Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
+              
+     //std::cout << JJ2.format(CleanFmt) << std::endl;
+      //std::cout << "---------" << std::endl;
+      //std::cout << JJ2(0,3) << std::endl;
+      //int x = (JJ2(0,3) >> (8*1)) & 0xff;
+      
+
+
+
+     //unsigned long n = 175;
+
+//       unsigned char bytes[4];
+//      bytes[0] = (n >> 24) && 0xFF;
+//       bytes[1] = (n >> 16) && 0xFF;
+//       bytes[2] = (n >> 8) && 0xFF;
+//       bytes[3] = n && 0xFF;
+// printf("%x %x %x %x\n", bytes[0],
+//                         bytes[1],
+//                        bytes[2],
+//                        bytes[3]);  
+   //std::cout << "1 "<<bytes[0]<< "2 "<<bytes[1]<< "3 "<<bytes[2]<< "4 "<<bytes[3] << std::endl;
       //std::cout << "JJ2 "<< JJ2.rows() << "x" << JJ2.cols() << std::endl;
        Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
+
       double const vel2 ((xd2.norm()));
       #else
       Vector const xd (JJ * qd);
@@ -528,8 +572,9 @@ static void cb_idle ()
       
 
      
-          
+
           for (int ii = 0; ii < temp.cols(); ii++) {
+
           //cout << obs.size()<< endl;
           //printDimensions(xx);
           //std::cout << obs.format(CleanFmt) << sep;
@@ -626,6 +671,7 @@ static void cb_idle ()
             globalflag +=1;
             }
         }
+
          
       // Vector delta (xx.block (0, 0, 2, 1) - repulsor.point_);
       // double const dist (delta.norm());
@@ -654,16 +700,16 @@ static void cb_idle ()
   //std::cout << "dxi "<< dxi.format(CleanFmt) << std::endl;
   xi -= dxi / eta;
   #endif
-
+     auto finish = std::chrono::high_resolution_clock::now();
+        elapsed+= finish - start;
+        countvar++;
   //xi2 -= ((dxi2.cast<int>())/1000.0)/eta2;
   
   // end of "the" CHOMP iteration
   //////////////////////////////////////////////////
   
   update_robots ();
-auto finish = std::chrono::high_resolution_clock::now();
-        elapsed+= finish - start;
-  countvar++;
+
   }
   else{
     std::cout << "Elapsed time: " << elapsed.count()/countvar << " s\n";
@@ -807,91 +853,139 @@ static void cb_mouse (double px, double py, int flags)
 
 int main()
 {
-   struct timeval tt;
-   gettimeofday (&tt, NULL);
-   srand (tt.tv_usec);
+   // struct timeval tt;
+   // gettimeofday (&tt, NULL);
+   // srand (tt.tv_usec);
 
-            //    int fd;
-            //    fd = open("/dev/ttyACM0",O_RDWR | O_NOCTTY );  //
-            //    if(fd == -1)           /* Error Checking */
-            //                  printf("\n  Error! in Opening ttyACM1  ");
-            //           else
-            //                  printf("\n  ttyACM0 Opened Successfully ");
+       
+        
+           int fd;
+           fd = open("/dev/ttyACM2",O_RDWR | O_NONBLOCK);//O_NOCTTY );  //
 
-            //       struct termios SerialPortSettings;  /* Create the structure                          */
+              struct pollfd fds[1];
+            fds[0].fd = fd;
+            fds[0].events = POLLIN ;
+            
 
-            //     tcgetattr(fd, &SerialPortSettings); /* Get the current attributes of the Serial port */
+           if(fd == -1)           /* Error Checking */
+                         printf("\n  Error! in Opening ttyACM1  ");
+                  else
+                         printf("\n  ttyACM1 Opened Successfully ");
 
-            //     /* Setting the Baud rate */ //B230400
-            //     cfsetispeed(&SerialPortSettings,B9600); /* Set Read  Speed as 9600                       */
-            //     cfsetospeed(&SerialPortSettings,B9600); // Set Write Speed as 9600
-                
-            //     SerialPortSettings.c_cflag &= ~PARENB;   /* Disables the Parity Enable bit(PARENB),So No Parity   */
-            //     SerialPortSettings.c_cflag &= ~CSTOPB;   /* CSTOPB = 2 Stop bits,here it is cleared so 1 Stop bit */
-            //     SerialPortSettings.c_cflag &= ~CSIZE;  /* Clears the mask for setting the data size             */
-            //     SerialPortSettings.c_cflag |=  CS8;      /* Set the data bits = 8                                 */
-            //     SerialPortSettings.c_cflag &= ~CRTSCTS;       /* No Hardware flow Control                         */
-            //     SerialPortSettings.c_cflag |= CREAD | CLOCAL; /* Enable receiver,Ignore Modem Control lines       */ 
-            //     SerialPortSettings.c_iflag &= ~(IXON | IXOFF | IXANY);          /* Disable XON/XOFF flow control both i/p and o/p */
-            //     SerialPortSettings.c_iflag &= ~(ICANON | ECHO | ECHOE | ISIG);  /* Non Cannonical mode                            */
-            //     SerialPortSettings.c_oflag &= ~OPOST;/*No Output Processing*/
-            //     /* Setting Time outs */
-            //     SerialPortSettings.c_cc[VMIN] = 5; /* Read at least 10 characters */
-            //     SerialPortSettings.c_cc[VTIME] = 0; /* Wait indefinetly   */
+              struct termios SerialPortSettings;  /* Create the structure                          */
 
+            tcgetattr(fd, &SerialPortSettings); /* Get the current attributes of the Serial port */
 
-            //     if((tcsetattr(fd,TCSANOW,&SerialPortSettings)) != 0) /* Set the attributes to the termios structure*/
-            //         printf("\n  ERROR ! in Setting attributes");
-            //     else
-            //         printf("\n  BaudRate = 115200 \n  StopBits = 1 \n  Parity   = none");
-                  
-            //           /*------------------------------- Read data from serial port -----------------------------*/
-            //     char write_buffer[] = "h";  /* Buffer containing characters to write into port       */ 
-            //     int  bytes_written  = 0;    /* Value for storing the number of bytes written to the port */ 
-            //     tcflush(fd, TCIFLUSH);    Discards old data in the rx buffer            
-
-            //     char read_buffer[14];   /* Buffer to store the data received              */
-            //     int  bytes_read = 0;    /* Number of bytes read by the read() system call */
-            //     int i = 0;
-                
-            //     while(true){
-            //     //for(int i =0; i<100; i++)
-            //     //{
-            //       auto start = std::chrono::high_resolution_clock::now();
-            //     bytes_written = write(fd,
-            //     "habhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhab"
-            //     ,90);
-            //     //"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
-            //     //, 96*8);//fd,write_buffer,sizeof(write_buffer));
-            //     //}
-            //     //std::string   
-            //     //byte[] MyMessage = System.Text.Encoding.UTF8.getBytes(yourString);
-
-            //     //MySerialPort.Write(MyMessage,0,MyMessage.Length);
+            /* Setting the Baud rate */ //B230400
+            cfsetispeed(&SerialPortSettings,B230400); /* Set Read  Speed as 9600                       */
+            cfsetospeed(&SerialPortSettings,B230400); // Set Write Speed as 9600
+            
+            SerialPortSettings.c_cflag &= ~PARENB;   /* Disables the Parity Enable bit(PARENB),So No Parity   */
+            SerialPortSettings.c_cflag &= ~CSTOPB;   /* CSTOPB = 2 Stop bits,here it is cleared so 1 Stop bit */
+            SerialPortSettings.c_cflag &= ~CSIZE;  /* Clears the mask for setting the data size             */
+            SerialPortSettings.c_cflag |=  CS8;      /* Set the data bits = 8                                 */
+            SerialPortSettings.c_cflag &= ~CRTSCTS;       /* No Hardware flow Control                         */
+            SerialPortSettings.c_cflag |= CREAD | CLOCAL; /* Enable receiver,Ignore Modem Control lines       */ 
+            SerialPortSettings.c_iflag &= ~(IXON | IXOFF | IXANY);          /* Disable XON/XOFF flow control both i/p and o/p */
+            SerialPortSettings.c_iflag &= ~(ICANON | ECHO | ECHOE | ISIG);  /* Non Cannonical mode                            */
+            SerialPortSettings.c_oflag &= ~OPOST;/*No Output Processing*/
+            /* Setting Time outs */
+            SerialPortSettings.c_cc[VMIN] = 8; /* Read at least 10 characters */
+            SerialPortSettings.c_cc[VTIME] = 0; /* Wait indefinetly   */
 
 
-            //         bytes_read = read(fd,&read_buffer,14); /* Read the data                   */
-            //     auto finish = std::chrono::high_resolution_clock::now();
-            //     elapsed = finish - start;
-            //     std::cout << "time:  " << elapsed.count() << endl;
-            //     elapsed = std::chrono::seconds { 0 };
+            if((tcsetattr(fd,TCSANOW,&SerialPortSettings)) != 0) /* Set the attributes to the termios structure*/
+                printf("\n  ERROR ! in Setting attributes");
+            else
+                printf("\n  BaudRate = 115200 \n  StopBits = 1 \n  Parity   = none");
+              
+                  /*------------------------------- Read data from serial port -----------------------------*/
+            char write_buffer[] = "h";  /* Buffer containing characters to write into port       */ 
+            int  bytes_written  = 0;    /* Value for storing the number of bytes written to the port */ 
+            tcflush(fd, TCIFLUSH);    //Discards old data in the rx buffer            
 
-            //     if ( bytes_read < 0 )
-            // {
-            // cout << "Error " << errno << " opening " << "/dev/ttyUSB0" << ": " << strerror (errno) << endl;
-            // }
-            //     printf("\n  %s written to ttyUSB0",write_buffer);
-            //     printf("\n  %d Bytes written to ttyUSB0", bytes_written);  
-            //     printf("\n\n  Bytes Rxed :%d", bytes_read); /* Print the number of bytes read */
-            //     printf("\n\n  ");
+            char read_buffer[20];    //Buffer to store the data received              
+            int  bytes_read = 0;    /* Number of bytes read by the read() system call */
+            int x = 10000000;
+            int counter=0;
+            int n = -1234000;//2147480000;//JJ2(0,3);
+            int number2 = n;
+            char numberStr[4];
+            char numberStr2[5];
+            memcpy(numberStr, &number2, 4);
+            numberStr2[0] = 'h';
+            numberStr2[1] = numberStr[0];
+            numberStr2[2] = numberStr[1];
+            numberStr2[3] = numberStr[2];
+            numberStr2[4] = numberStr[3];
+            //printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
+            
+            while(true)//counter <10)
+            {
+              counter+=1;
+              n+=1;
+              number2 = n;
+              printf("number: %d \n", number2);
 
-            //       printf("a");
-            //     for(i=0;i<bytes_read;i++)  /*printing only the received characters*/
-            //         printf("%c",read_buffer[i]);
-            //       printf("a ");
-            //     printf("\n +----------------------------------+\n\n\n");
-            // }
-            //     close(fd); /* Close the serial port */                                  
+              memcpy(numberStr, &number2, 4);
+              numberStr2[0] = 'h';
+              numberStr2[1] = numberStr[0];
+              numberStr2[2] = numberStr[1];
+              numberStr2[3] = numberStr[2];
+              numberStr2[4] = numberStr[3];
+                  //printf("\n  %d i", x); 
+                               
+
+             auto start = std::chrono::high_resolution_clock::now();
+              int pollrc = poll( fds, 1,10 );
+             //auto temp = ("h"+std::to_string(x)+"g").c_str();
+             //std::cout << "temp:  " << temp << std::endl;
+            // std::string strtosend = "h" + std::string(numberStr);
+             bytes_written = write(fd,  numberStr2 ,sizeof(numberStr2)); //strtosend.c_str()
+                         printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
+
+             
+            //bytes_written = write(fd, "a",1); 
+            //for(int i =0; i<100; i++)
+            //{
+             
+            //"habhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhab"
+            //,90);
+            //"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+            //, 96*8);//fd,write_buffer,sizeof(write_buffer));
+            //}
+            if( fds[0].revents & POLLIN )
+            {
+                //char buff[1024];
+                //ssize_t rc = read(serial_fd, buff, sizeof(buff) );
+                 printf("\n  %d Bytes written to ttyUSB0", bytes_written);  
+                printf("\n\n  Bytes Rxed :%d \n", bytes_read); /* Print the number of bytes read */
+                bytes_read = read(fd,&read_buffer,20); /* Read the data                   */
+                if ( bytes_read <= 0 )
+                  {
+                  cout << "Error " << errno << " opening " << "/dev/ttyUSB0" << ": " << strerror (errno) << endl;
+                  }
+                if (bytes_read > 0)
+                {
+                    /* You've got rc characters. do something with buff */
+                  for(int i=0;i<bytes_read;i++){  /*printing only the received characters*/
+                      printf("%c",read_buffer[i]);
+
+                    }
+                     printf("\n +----------------------------------+\n\n\n");
+                   
+                  auto finish = std::chrono::high_resolution_clock::now();
+                  elapsed = finish - start;
+                  std::cout << "time:  " << elapsed.count() << endl;
+                  elapsed = std::chrono::seconds { 0 };
+                  printf("\n +----------------------------------+\n\n\n");
+                }
+            }
+
+            //x = x +1;
+        }
+
+        //     close(fd); /* Close the serial port */                                  
    // int x =10;
    // int y =10;
    // int A[x][y];
@@ -949,16 +1043,16 @@ int main()
     // std::chrono::duration<double> elapsed = finish - start;
     // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   
-  add_obs(3.0, 0.0, 2.0);
-  add_obs(0.0, 3.0, 2.0);
-  init_chomp();
-  update_robots();  
-  state = PAUSE;
+  // add_obs(3.0, 0.0, 2.0);
+  // add_obs(0.0, 3.0, 2.0);
+  // init_chomp();
+  // update_robots();  
+  // state = PAUSE;
   
-  gfx::add_button ("jumble", cb_jumble);
-  gfx::add_button ("step", cb_step);
-  gfx::add_button ("run", cb_run);
-  gfx::main ("chomp", cb_idle, cb_draw, cb_mouse);
+  // gfx::add_button ("jumble", cb_jumble);
+  // gfx::add_button ("step", cb_step);
+  // gfx::add_button ("run", cb_run);
+  // gfx::main ("chomp", cb_idle, cb_draw, cb_mouse);
 
 
 }

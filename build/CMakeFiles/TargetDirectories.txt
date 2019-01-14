@@ -1,0 +1,4 @@
+/home/robocup/trychomp/build/CMakeFiles/edit_cache.dir
+/home/robocup/trychomp/build/CMakeFiles/rebuild_cache.dir
+/home/robocup/trychomp/build/CMakeFiles/pprrr2d.dir
+/home/robocup/trychomp/build/CMakeFiles/pp2d.dir
