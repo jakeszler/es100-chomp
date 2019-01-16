@@ -73,7 +73,7 @@
 
        #include <arpa/inet.h>
 
-#define INTMATH 1
+#define INTMATH 0
 #define loopcountvar 1000
 
 typedef Eigen::VectorXd Vector;
@@ -90,7 +90,7 @@ Eigen::IOFormat HeavyFmt(Eigen::FullPrecision, 0, ", ", ";\n", "[", "]", "[", "]
 Vector xi;			// the trajectory (q_1, q_2, ...q_n)
 Vector qs;			// the start config a.k.a. q_0
 Vector qe;			// the end config a.k.a. q_(n+1)
-Vector xi2;
+Eigen::VectorXi xi2;
 Eigen::VectorXi qs2;
 Eigen::VectorXi qe2;
 
@@ -157,21 +157,43 @@ public:
       break;
     case 1:
       tf.translation() << position_[0], position_[1], 0.0;
-      tf.linear() << c2_, -s2_, 0.0, s2_, c2_, 0.0, 0.0, 0.0, 1.0;
+      //tf.linear() << c2_, -s2_, 0.0, s2_, c2_, 0.0, 0.0, 0.0, 1.0;
       break;
     case 2:
       tf.translation() << pos_a_[0], pos_a_[1], 0.0;
-      tf.linear() << c23_, -s23_, 0.0, s23_, c23_, 0.0, 0.0, 0.0, 1.0;
+      //tf.linear() << c23_, -s23_, 0.0, s23_, c23_, 0.0, 0.0, 0.0, 1.0;
       break;
     case 3:
       tf.translation() << pos_b_[0], pos_b_[1], 0.0;
-      tf.linear() << c234_, -s234_, 0.0, s234_, c234_, 0.0, 0.0, 0.0, 1.0;
+      //tf.linear() << c234_, -s234_, 0.0, s234_, c234_, 0.0, 0.0, 0.0, 1.0;
       break;
     default:
       errx (EXIT_FAILURE, "Robot::frame() called on invalid node %zu", node);
     }
     return tf;
   }
+    Transform frame2 (size_t node) const
+  {
+    Transform tf (Transform::Identity());
+    switch (node) {
+    case 0:
+      tf.translation() << position_[0]*1000, position_[1]*1000, 0.0;
+      break;
+    case 1:
+      tf.translation() << position_[0]*1000, position_[1]*1000, 0.0;
+      break;
+    case 2:
+      tf.translation() << pos_a_[0]*1000, pos_a_[1]*1000, 0.0;
+      break;
+    case 3:
+      tf.translation() << pos_b_[0]*1000, pos_b_[1]*1000, 0.0;
+      break;
+    default:
+      errx (EXIT_FAILURE, "Robot::frame() called on invalid node %zu", node);
+    }
+    return tf;
+  }
+
   
   
   Matrix computeJxo (size_t node, Vector const & gpoint) const
@@ -200,7 +222,35 @@ public:
     return Jxo;
   }
   
+
+   Eigen::MatrixXi computeJxo2 (size_t node, Eigen::VectorXi const & gpoint) const
+  {
+    Eigen::MatrixXi Jxo2 (Eigen::MatrixXi::Zero (6, 5));
+    switch (node) {
+    case 3:
+      Jxo2 (0, 4) = pos_b_[1]*1000 - gpoint[1];
+      Jxo2 (1, 4) = gpoint[0] - pos_b_[0]*1000;
+      Jxo2 (5, 4) = 1.0*1000;
+    case 2:
+      Jxo2 (0, 3) = pos_a_[1]*1000 - gpoint[1];
+      Jxo2 (1, 3) = gpoint[0] - pos_a_[0]*1000;
+      Jxo2 (5, 3) = 1.0*1000;
+    case 1:
+      Jxo2 (0, 2) = position_[1]*1000 - gpoint[1];
+      Jxo2 (1, 2) = gpoint[0]    - position_[0]*1000;
+      Jxo2 (5, 2) = 1.0*1000;
+    case 0:
+      Jxo2 (0, 0) = 1.0*1000;
+      Jxo2 (1, 1) = 1.0*1000;
+      break;
+    default:
+      errx (EXIT_FAILURE, "Robot::computeJxo() called on invalid node %zu", node);
+    }
+    return Jxo2;
+  }
+
   
+
   void update (Vector const & position)
   {
     if (position.size() != 5) {
@@ -347,7 +397,7 @@ static void init_chomp ()
 
   qs2.resize (5);
   qs2 << -5*scale, -5*scale, (M_PI/2)*scale, (M_PI/2)*scale, -(M_PI/2)*scale;
-  xi2 = Vector::Zero (xidim);//Eigen::VectorXi::Zero (xidim);
+  xi2 = Eigen::VectorXi::Zero (xidim); //Vector::Zero (xidim);//
   qe2.resize (5);
   qe2 << 7*scale, 7*scale, -(M_PI/2)*scale, -(M_PI/2)*scale, (M_PI/2)*scale; //might have issue with cast to int
   
@@ -455,20 +505,26 @@ static void cb_idle ()
   // beginning of "the" CHOMP iteration
   if(countvar < loopcountvar){
   //AA2 scale by 1000*1000 and bb2 scale by 1000
-  Vector nabla_smooth ((AA * xi + bb)); //
-  //  std::cout << "nabla_smooth " << nabla_smooth.rows() << "x" << nabla_smooth.cols() << std::endl; 
-  // std::cout << "nabla_smooth " << (AA*xi).format(HeavyFmt) << std::endl; //*xi
-  Eigen::VectorXi nabla_smooth2 (AA2*( ((xi*1000).cast<int>()) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
+  #ifdef INTMATH
+  Eigen::VectorXi nabla_smooth2 (AA2*( ((xi2/1000)) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
   //Eigen::VectorXi nabla_smoothtest ((AA2*( ((xi*1000).cast<int>()) ) )); //scaled by 1000*1000 *( ((xi*1000).cast<int>()) ) 
      //std::cout << "nabla_smooth2 " << xi2.rows() << "x" << nabla_smooth.cols() << std::endl; 
+  Eigen::VectorXi const & xidd2 (nabla_smooth2);
+  Eigen::VectorXi nabla_obs2 (Eigen::VectorXi::Zero (xidim));
+  #else
+    Vector nabla_smooth ((AA * xi + bb)); //
+//  std::cout << "nabla_smooth " << nabla_smooth.rows() << "x" << nabla_smooth.cols() << std::endl; 
+  // std::cout << "nabla_smooth " << (AA*xi).format(HeavyFmt) << std::endl; //*xi
+  Vector const & xidd (nabla_smooth); 
+  Vector nabla_obs (Vector::Zero (xidim));
+
+  #endif
 
 
   // std::cout << "nabla_smoothtest "<< ( AA2*(xi*1000).cast<int>()).format(HeavyFmt) << std::endl; //.cast<double>()/(scale*scale)
-  Vector const & xidd (nabla_smooth); // indeed, it is the same in this formulation...
-  Eigen::VectorXi const & xidd2 (nabla_smooth2);
+// indeed, it is the same in this formulation...
 //.format(HeavyFmt)
-  Vector nabla_obs (Vector::Zero (xidim));
-  Eigen::VectorXi nabla_obs2 (Eigen::VectorXi::Zero (xidim));
+  
   //#pragma omp parallel for
   int arr[nq];
   for (int i=0; i < nq; i++)
@@ -494,31 +550,37 @@ static void cb_idle ()
     Vector qd;
     Eigen::VectorXi qd2;
     if (iq == nq - 1) {
-     // qd = qe - xi.block (iq * cdim, 0, cdim, 1);
-      //qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
-      
+
       //qd = qe - xi.block (iq * cdim, 0, cdim, 1);
-      qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
+      //qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
+
+      qd2 = (qe2 - (xi2.block (iq * cdim, 0, cdim, 1)/scale));   
       //std::cout << qd.format(CleanFmt) << std::endl;
       //std::cout << qd2.format(CleanFmt) << std::endl;
     }
     else {
       //qd = xi.block ((iq+1) * cdim, 0, cdim, 1) - xi.block (iq * cdim, 0, cdim, 1);
-      qd2 = (xi.block ((iq+1) * cdim, 0, cdim, 1)*scale).cast<int>() - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>();
+      //qd2 = (xi.block ((iq+1) * cdim, 0, cdim, 1)*scale).cast<int>() - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>();
       
+      qd2 = (xi2.block ((iq+1) * cdim, 0, cdim, 1)/scale) - (xi2.block (iq * cdim, 0, cdim, 1)/scale);
     }
   
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
 
-      Vector const xx (robots[iq].frame(ib).translation());
 
-      Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
+
+
+      // std::cout << "---------" << std::endl;
+
+      // std::cout << xx.format(CleanFmt) << std::endl;
+
 
       #ifdef INTMATH
-      Eigen::VectorXi const xx2 ((xx*scale).cast<int>());
-     
+      //Eigen::VectorXi const xx2 ((xx*scale).cast<int>());
+      Eigen::VectorXi const xx2 (robots[iq].frame2(ib).translation().cast<int>());
+      Eigen::MatrixXi const JJ2 (robots[iq].computeJxo2 (ib, xx2).block(0, 0, 2, 5)); // XXXX hardcoded indices
       //std::cout << "xx2 "<<  xx2.rows() << "x" << xx2.cols() << xx2 << std::endl;
-      Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
+      //Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
               
      //std::cout << JJ2.format(CleanFmt) << std::endl;
       //std::cout << "---------" << std::endl;
@@ -545,7 +607,11 @@ static void cb_idle ()
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
 
       double const vel2 ((xd2.norm()));
+
       #else
+      Vector const xx (robots[iq].frame(ib).translation());
+      Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
+
       Vector const xd (JJ * qd);
       double const vel (xd.norm());//xd.norm());
       #endif
@@ -576,7 +642,7 @@ static void cb_idle ()
       Vector const  xdn (xd / vel);
       Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
-        //Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
+      Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
       //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
       //auto temp =obs;
       #endif
@@ -622,8 +688,8 @@ static void cb_idle ()
             //std::cout << "delta old "<< delta.format(CleanFmt) << std::endl;
             //std::cout << "delta2 old"<< delta2.format(CleanFmt) << std::endl;
             delta *=  temp;
-            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta) ); // delta F obslacate close
-            //- (cost2 * kappa2/scale)
+            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta)- (cost2 * kappa2) ); // delta F obslacate close
+            //
             #endif
 
           //std::cout << "delta: "<< delta << std::endl;
@@ -701,14 +767,18 @@ static void cb_idle ()
 
   
   #ifdef INTMATH
-  Vector dxi2 ((Ainv2 * ((nabla_obs2) + lambda * (nabla_smooth2))).cast<double>()/(scale*scale)); //nabla_smooth2.cast<double>()/(scale*scale)
-  Eigen::VectorXi dxi2int (((Ainv2*nabla_obs2) +  lambda * (nabla_smooth2)));
-  xi -= (dxi2)/ eta;///1000000
-  xi2 -= (dxi2int.cast<double>()/(scale*scale))/eta;
+  //Vector dxi2 ((Ainv2 * ((nabla_obs2) + lambda * (nabla_smooth2))).cast<double>()/(scale*scale)); //nabla_smooth2.cast<double>()/(scale*scale)
+  //Eigen::VectorXi //
+  Eigen::VectorXi dxi2int (Ainv2*((nabla_obs2) +  lambda * (nabla_smooth2)));
+  
+  //xi -= (dxi2)/ eta;///1000000
+  xi2 -= (dxi2int)/eta2; ///(scale*scale) 
+  xi = xi2.cast<double>()/(scale*scale);
   // xi2 scale by 1000000     
-    //std::cout << "xi "<< (dxi2).format(CleanFmt) << std::endl;
+    //std::cout << "xi "<< (xi).format(CleanFmt) << std::endl;
        //Eigen::VectorXi test (Ainv2 * ((nabla_obs2/(scale*scale)) + lambda * (nabla_smooth2)));
-        //std::cout << "xi2 "<<(dxi2int).format(CleanFmt) << std::endl; //(Ainv2*nabla_obs2)/1000)
+    // std::cout << "xi2 "<<(xi2).format(CleanFmt) << std::endl; //(Ainv2*nabla_obs2)/1000)
+         //exit (EXIT_FAILURE);
   #else
   Vector dxi (Ainv * ( nabla_obs + lambda *nabla_smooth)); //
   //std::cout << "dxi "<< (dxi/eta).format(CleanFmt) << std::endl;
