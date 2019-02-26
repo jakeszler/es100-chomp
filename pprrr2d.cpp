@@ -98,7 +98,7 @@ Eigen::VectorXi qs2;
 Eigen::VectorXi qe2;
 
 static size_t const obs_dim(3); // x,y,R
-static size_t const nq (20);	// number of q stacked into xi
+static size_t const nq (3);	// number of q stacked into xi
 static size_t const cdim (5);	// dimension of config space
 static size_t const xidim (nq * cdim); // dimension of trajectory, xidim = nq * cdim
 static double const dt (1.0);	       // time step
@@ -180,16 +180,16 @@ public:
     Transform tf (Transform::Identity());
     switch (node) {
     case 0:
-      tf.translation() << position_[0]*1000, position_[1]*1000, 0.0;
+      tf.translation() << position_[0]*scale, position_[1]*scale, 0.0;
       break;
     case 1:
-      tf.translation() << position_[0]*1000, position_[1]*1000, 0.0;
+      tf.translation() << position_[0]*scale, position_[1]*scale, 0.0;
       break;
     case 2:
-      tf.translation() << pos_a_[0]*1000, pos_a_[1]*1000, 0.0;
+      tf.translation() << pos_a_[0]*scale, pos_a_[1]*scale, 0.0;
       break;
     case 3:
-      tf.translation() << pos_b_[0]*1000, pos_b_[1]*1000, 0.0;
+      tf.translation() << pos_b_[0]*scale, pos_b_[1]*scale, 0.0;
       break;
     default:
       errx (EXIT_FAILURE, "Robot::frame() called on invalid node %zu", node);
@@ -231,20 +231,20 @@ public:
     Eigen::MatrixXi Jxo2 (Eigen::MatrixXi::Zero (6, 5));
     switch (node) {
     case 3:
-      Jxo2 (0, 4) = pos_b_[1]*1000 - gpoint[1];
-      Jxo2 (1, 4) = gpoint[0] - pos_b_[0]*1000;
-      Jxo2 (5, 4) = 1.0*1000;
+      Jxo2 (0, 4) = pos_b_[1]*scale - gpoint[1];
+      Jxo2 (1, 4) = gpoint[0] - pos_b_[0]*scale;
+      Jxo2 (5, 4) = 1.0*scale;
     case 2:
-      Jxo2 (0, 3) = pos_a_[1]*1000 - gpoint[1];
-      Jxo2 (1, 3) = gpoint[0] - pos_a_[0]*1000;
-      Jxo2 (5, 3) = 1.0*1000;
+      Jxo2 (0, 3) = pos_a_[1]*scale - gpoint[1];
+      Jxo2 (1, 3) = gpoint[0] - pos_a_[0]*scale;
+      Jxo2 (5, 3) = 1.0*scale;
     case 1:
-      Jxo2 (0, 2) = position_[1]*1000 - gpoint[1];
-      Jxo2 (1, 2) = gpoint[0]    - position_[0]*1000;
-      Jxo2 (5, 2) = 1.0*1000;
+      Jxo2 (0, 2) = position_[1]*scale - gpoint[1];
+      Jxo2 (1, 2) = gpoint[0]    - position_[0]*scale;
+      Jxo2 (5, 2) = 1.0*scale;
     case 0:
-      Jxo2 (0, 0) = 1.0*1000;
-      Jxo2 (1, 1) = 1.0*1000;
+      Jxo2 (0, 0) = 1.0*scale;
+      Jxo2 (1, 1) = 1.0*scale;
       break;
     default:
       errx (EXIT_FAILURE, "Robot::computeJxo() called on invalid node %zu", node);
@@ -261,9 +261,14 @@ public:
 	    (size_t) position.size());
     }
     position_ = position;
-    
+      auto start = std::chrono::high_resolution_clock::now();
+
     c2_ = cos (position_[2]);
     s2_ = sin (position_[2]);
+         auto finish = std::chrono::high_resolution_clock::now();
+         elapsed= finish - start;
+    std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+    elapsed = std::chrono::seconds { 0 };
     ac2_ = len_a_ * c2_;
     as2_ = len_a_ * s2_;
     
@@ -445,7 +450,7 @@ static void init_chomp ()
   bb2.block (0,            0, cdim, 1) = qs2;
   bb2.block (xidim - cdim, 0, cdim, 1) = qe2;
   bb2 /= - (dt2 * dt2 * (nq + 1));
-  bb2 = bb2*1000;
+  bb2 = bb2*scale;
   // not needed anyhow
   // double cc (double (qs.transpose() * qs) + double (qe.transpose() * qe));
   // cc /= dt * dt * (nq + 1);
@@ -509,10 +514,14 @@ static void cb_idle ()
   // beginning of "the" CHOMP iteration
   //if(countvar < loopcountvar){
   //AA2 scale by 1000*1000 and bb2 scale by 1000
+  for(int countiter = 0;  countiter < 10; countiter++)
+  {
   #ifdef INTMATH
-  Eigen::VectorXi nabla_smooth2 (AA2*( ((xi2/1000)) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
+  Eigen::VectorXi nabla_smooth2 (AA2*( ((xi2/scale)) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
   //Eigen::VectorXi nabla_smoothtest ((AA2*( ((xi*1000).cast<int>()) ) )); //scaled by 1000*1000 *( ((xi*1000).cast<int>()) ) 
-     //std::cout << "nabla_smooth2 " << xi2.rows() << "x" << nabla_smooth.cols() << std::endl; 
+  //   std::cout << "nabla_smooth2 " << nabla_smooth2.rows() << "x" << nabla_smooth2.cols() << std::endl; 
+    //      std::cout << "nabla_smooth2 " <<nabla_smooth2 << std::endl; 
+
   Eigen::VectorXi const & xidd2 (nabla_smooth2);
      //std::cout << "bb " << (bb2).format(HeavyFmt) << std::endl; //*xi
   //std::cout << "AA2 " << (AA2).format(HeavyFmt) << std::endl; //*xi
@@ -545,7 +554,8 @@ static void cb_idle ()
   //       std::cout << arr[i] << " ";
   //   }
   #ifdef INTMATH
-    obs2 = (obs *1000).cast<int>();
+    obs2 = (obs *scale).cast<int>();
+
   #endif  
   //std::cout << obs2.format(CleanFmt) << std::endl;
 
@@ -578,9 +588,6 @@ static void cb_idle ()
            //std::cout << "xi2" <<xi2.block (iq * cdim, 0, cdim, 1).format(CleanFmt) << std::endl;
 
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
-
-
-
 
       // std::cout << "---------" << std::endl;
 
@@ -615,10 +622,10 @@ static void cb_idle ()
       //std::cout << "JJ2 "<< JJ2.rows() << "x" << JJ2.cols() << std::endl;
        Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
-       std::cout << "xd2 "<< xd2.format(CleanFmt) << std::endl;
-      int const vel2 (xd2.sum());//xd2.norm()
+      // std::cout << "xd2 "<< xd2.format(CleanFmt) << std::endl;
+      int const vel2 (xd2.norm());//xd2.norm()
 
-      std::cout << "vel2: " << vel2<< std::endl;
+      //std::cout << "vel2: " << vel2<< std::endl;
 
       #else
 
@@ -627,10 +634,10 @@ static void cb_idle ()
 
       Vector const xd (JJ * qd);
 
-      double const vel (xd.norm());//xd.norm());
+      double const vel (xd.sum());//xd.norm());
 
      //   std::cout << "xd"<< xd.format(CleanFmt) << std::endl;
-     std::cout << "vel "<< vel << std::endl;
+    // std::cout << "vel "<< vel << std::endl;
       #endif
 
       // Eigen::VectorXi matA(2, 1);
@@ -686,12 +693,14 @@ static void cb_idle ()
             if ((dist2 >= obs2(2, ii)) || (dist2 < 1))
               continue;
             static int const gain2(1);
-            int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
+            //int cost2(scale - (dist2/2));// / (3.0*scale));  (dist2*scale/obs2(2, ii)));
             //(gain2 * obs2(2, ii))/scale * 
-            int temp2 = -gain2 *pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
+            int temp2 = -gain2 * (scale - (dist2/2)) *64; //pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
             delta2 *= temp2;
+           // std::cout << "temp2" << temp2 <<endl;
+           //  std::cout << "obs2(2, ii)" << obs2(2, ii) <<endl; 
             delta2 /=scale; 
-            nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * (((prj2 * delta2)- (cost2 * kappa2))/scale)/scale; // /scale)
+            nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale; // /scale) - (cost2 * kappa2))
             
               //std::cout << "JJold : "<< (JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale).format(CleanFmt) << std::endl;
               //std::cout << "NEW: "<< (JJ2.transpose()  * vel2/scale  * ((prj2 * delta2)/scale)).format(CleanFmt) << std::endl;
@@ -824,6 +833,7 @@ static void cb_idle ()
     elapsed = std::chrono::seconds { 0 };
     countvar = 0;
   }
+}
   // std::cout << "Elapsed time: " << elapsed.count()/4 << " s\n";
   //   elapsed = std::chrono::seconds { 0 };
 }
