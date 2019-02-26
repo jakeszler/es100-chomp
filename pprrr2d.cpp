@@ -75,7 +75,7 @@
 #include <Eigen/Sparse>
 
 #define INTMATH 1
-#define loopcountvar 1000
+#define loopcountvar 100
 
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
@@ -107,7 +107,7 @@ static double const lambda (1.0); // weight of smoothness objective
 static int const dt2 (1);        // time step
 static int const eta2 (100); // >= 1, regularization factor for gradient descent
 static int const lambda2 (1); // weight of smoothness objective
-static int const scale(1e3);
+static int const scale(1024);//(1e3);
 int globalflag(0);
 //////////////////////////////////////////////////
 // gradient descent etc
@@ -338,9 +338,9 @@ public:
 };
 
 double const Robot::radius_ (0.5);
-double const Robot::len_a_ (0.8);
-double const Robot::len_b_ (0.9);
-double const Robot::len_c_ (0.9);
+double const Robot::len_a_ (1);//(0.8);
+double const Robot::len_b_ (1);//(0.9);
+double const Robot::len_c_ (1);//(0.9);
 
 Robot rstart;
 Robot rend;
@@ -507,18 +507,21 @@ static void cb_idle ()
   
   //////////////////////////////////////////////////
   // beginning of "the" CHOMP iteration
-  if(countvar < loopcountvar){
+  //if(countvar < loopcountvar){
   //AA2 scale by 1000*1000 and bb2 scale by 1000
   #ifdef INTMATH
   Eigen::VectorXi nabla_smooth2 (AA2*( ((xi2/1000)) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
   //Eigen::VectorXi nabla_smoothtest ((AA2*( ((xi*1000).cast<int>()) ) )); //scaled by 1000*1000 *( ((xi*1000).cast<int>()) ) 
      //std::cout << "nabla_smooth2 " << xi2.rows() << "x" << nabla_smooth.cols() << std::endl; 
   Eigen::VectorXi const & xidd2 (nabla_smooth2);
+     //std::cout << "bb " << (bb2).format(HeavyFmt) << std::endl; //*xi
+  //std::cout << "AA2 " << (AA2).format(HeavyFmt) << std::endl; //*xi
+  //std::cout << "xi2 " << (xi2).format(HeavyFmt) << std::endl; //*xi
   Eigen::VectorXi nabla_obs2 (Eigen::VectorXi::Zero (xidim));
   #else
     Vector nabla_smooth ((AA * xi + bb)); //
 //  std::cout << "nabla_smooth " << nabla_smooth.rows() << "x" << nabla_smooth.cols() << std::endl; 
-  // std::cout << "nabla_smooth " << (AA*xi).format(HeavyFmt) << std::endl; //*xi
+  // std::cout << "AA " << (AA).format(HeavyFmt) << std::endl; //*xi
   Vector const & xidd (nabla_smooth); 
   Vector nabla_obs (Vector::Zero (xidim));
 
@@ -526,17 +529,17 @@ static void cb_idle ()
 
 
   // std::cout << "nabla_smoothtest "<< ( AA2*(xi*1000).cast<int>()).format(HeavyFmt) << std::endl; //.cast<double>()/(scale*scale)
-// indeed, it is the same in this formulation...
+// indeed, it is the same in this formulation... 
 //.format(HeavyFmt)
   
   //#pragma omp parallel for
-  int arr[nq];
-  for (int i=0; i < nq; i++)
-    {
-        arr[i] = i;
-    }
+        // int arr[nq];
+        // for (int i=0; i < nq; i++)
+        //   {
+        //       arr[i] = i;
+        //   }
 
-  random_shuffle(&arr[0], &arr[nq-1]);
+        // random_shuffle(&arr[0], &arr[nq-1]);
   // for (int i=0; i < nq; i++)
   //   {
   //       std::cout << arr[i] << " ";
@@ -549,26 +552,31 @@ static void cb_idle ()
   //std::cout << bb.format(CleanFmt) << std::endl;
   auto start = std::chrono::high_resolution_clock::now();
 
-  for (int p = nq-1; -1 < p; --p) {
-    int iq = arr[p];
+  for (int p = nq-1; -1 < p; --p) { //nq-1
+    //std::cout << "p:"<< p << std::endl;
+    int iq = p;//arr[p];
     Vector qd;
     Eigen::VectorXi qd2;
     if (iq == nq - 1) {
-
-      //qd = qe - xi.block (iq * cdim, 0, cdim, 1);
-      //qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
-
+      #ifdef INTMATH
       qd2 = (qe2 - (xi2.block (iq * cdim, 0, cdim, 1)/scale));   
-      //std::cout << qd.format(CleanFmt) << std::endl;
-      std::cout << qd2.format(CleanFmt) << std::endl;
+
+      //qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
+      #else
+      qd = qe - xi.block (iq * cdim, 0, cdim, 1);
+      //std::cout << qd2.format(CleanFmt) << std::endl;
+      #endif
     }
     else {
-      //qd = xi.block ((iq+1) * cdim, 0, cdim, 1) - xi.block (iq * cdim, 0, cdim, 1);
+      #ifdef INTMATH
+          qd2 = (xi2.block ((iq+1) * cdim, 0, cdim, 1)/scale) - (xi2.block (iq * cdim, 0, cdim, 1)/scale);
+    #else
+      qd = xi.block ((iq+1) * cdim, 0, cdim, 1) - xi.block (iq * cdim, 0, cdim, 1);
       //qd2 = (xi.block ((iq+1) * cdim, 0, cdim, 1)*scale).cast<int>() - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>();
-      
-      qd2 = (xi2.block ((iq+1) * cdim, 0, cdim, 1)/scale) - (xi2.block (iq * cdim, 0, cdim, 1)/scale);
+      #endif
     }
-  
+           //std::cout << "xi2" <<xi2.block (iq * cdim, 0, cdim, 1).format(CleanFmt) << std::endl;
+
     for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
 
 
@@ -587,14 +595,11 @@ static void cb_idle ()
       //std::cout << "xx2 "<<  xx2.rows() << "x" << xx2.cols() << xx2 << std::endl;
       //Eigen::MatrixXi const JJ2 ((JJ*scale).cast<int>());
               
-       std::cout << "JJblock " << JJ2.format(CleanFmt) << std::endl;
-       std::cout << "---------" << std::endl;
-       std::cout << "JJfull "<<(tempjj.format(CleanFmt)) << std::endl;
+        //std::cout << "JJblock " << JJ2.format(CleanFmt) << std::endl;
+       // std::cout << "---------" << std::endl;
+        //std::cout << "JJfull "<<(tempjj.format(CleanFmt)) << std::endl;
       //int x = (JJ2(0,3) >> (8*1)) & 0xff;
       
-
-
-
      //unsigned long n = 175;
 
 //       unsigned char bytes[4];
@@ -610,15 +615,22 @@ static void cb_idle ()
       //std::cout << "JJ2 "<< JJ2.rows() << "x" << JJ2.cols() << std::endl;
        Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
+       std::cout << "xd2 "<< xd2.format(CleanFmt) << std::endl;
+      int const vel2 (xd2.sum());//xd2.norm()
 
-      double const vel2 ((xd2.norm()));
+      std::cout << "vel2: " << vel2<< std::endl;
 
       #else
+
       Vector const xx (robots[iq].frame(ib).translation());
       Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
 
       Vector const xd (JJ * qd);
+
       double const vel (xd.norm());//xd.norm());
+
+     //   std::cout << "xd"<< xd.format(CleanFmt) << std::endl;
+     std::cout << "vel "<< vel << std::endl;
       #endif
 
       // Eigen::VectorXi matA(2, 1);
@@ -626,19 +638,19 @@ static void cb_idle ()
       // int const testvala (matA.dot(matA));
       // std::cout << "matA"<<  matA.format(CleanFmt)<< std::endl;
       // std::cout << "test"<< testvala<< std::endl;
-       // std::cout << "xd"<<xd.format(CleanFmt) << std::endl;
-       // std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
-       // std::cout << "vel "<<vel << std::endl;
-       // std::cout << "vel2 "<<vel2 << std::endl;
+        //std::cout << "xd"<< xd.format(CleanFmt) << std::endl;
+        //std::cout << "xd2 "<<xd2.format(CleanFmt) << std::endl;
+     //  std::cout << "vel "<< vel << std::endl;
+      // std::cout << "vel2 "<<vel2 << std::endl;
 
 
       #ifdef INTMATH
-      if (vel2 < 2)  // avoid div by zero further down
+      if (vel2 < 1)  // avoid div by zero further down
         continue;
       Eigen::VectorXi const xdn2 ((xd2 * scale)/ vel2);
       Eigen::VectorXi const xdd2 (JJ2 * xidd2.block (iq * cdim, 0, cdim , 1) );
       Eigen::MatrixXi const prj2 ((scale*Eigen::MatrixXi::Identity (2, 2)) - (xdn2 * xdn2.transpose()/scale));
-      //Eigen::VectorXi const kappa2 ((prj2 * xdd2 / (pow(vel2, 2)))); // / pow(vel2, 2)
+      Eigen::VectorXi const kappa2 ((prj2 * xdd2 / (pow(vel2, 2)))); // / pow(vel2, 2)
       //std::cout << "kappa2 "<< kappa2.format(CleanFmt) << std::endl;
       auto temp =obs2;
       #else
@@ -649,7 +661,8 @@ static void cb_idle ()
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
       Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
       //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
-      //auto temp =obs;
+      auto temp =obs;
+
       #endif
       
 
@@ -673,30 +686,28 @@ static void cb_idle ()
             if ((dist2 >= obs2(2, ii)) || (dist2 < 1))
               continue;
             static int const gain2(1);
-            //int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
+            int cost2((scale - (dist2*scale/obs2(2, ii))));// / (3.0*scale));
             //(gain2 * obs2(2, ii))/scale * 
             int temp2 = -gain2 *pow(scale - (dist2*scale)/(obs2(2, ii)), 2.0);// / dist2; 
             delta2 *= temp2;
             delta2 /=scale; 
-            nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale; // /scale)
+            nabla_obs2.block(iq * cdim, 0, cdim, 1) += JJ2.transpose()  * vel2 / scale * (((prj2 * delta2)- (cost2 * kappa2))/scale)/scale; // /scale)
             
               //std::cout << "JJold : "<< (JJ2.transpose()  * vel2 / scale * ((prj2 * delta2)/scale)/scale).format(CleanFmt) << std::endl;
               //std::cout << "NEW: "<< (JJ2.transpose()  * vel2/scale  * ((prj2 * delta2)/scale)).format(CleanFmt) << std::endl;
 
             #else
             Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
-            //std::cout << "delta: = " << delta << sep;
             double const dist(delta.norm());
             if ((dist >= obs(2, ii)) || (dist < 1e-9))
               continue;
             static double const gain(1.0);
             double temp = -gain *pow(1.0 - dist /obs(2, ii), 2.0);// / dist;
-            //double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
+            double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
             //gain * obs(2, ii) *
-            //std::cout << "delta old "<< delta.format(CleanFmt) << std::endl;
-            //std::cout << "delta2 old"<< delta2.format(CleanFmt) << std::endl;
+           // std::cout << "cost "<< cost << std::endl;
             delta *=  temp;
-            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta)- (cost2 * kappa2) ); // delta F obslacate close
+            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta)); //- (cost * kappa)  // delta F obslacate close
             //
             #endif
 
@@ -807,8 +818,8 @@ static void cb_idle ()
   
   update_robots ();
 
-  }
-  else{
+  //}
+  if(countvar >= loopcountvar){//else{
     std::cout << "Elapsed time: " << elapsed.count()/countvar << " s\n";
     elapsed = std::chrono::seconds { 0 };
     countvar = 0;
@@ -958,138 +969,144 @@ int main()
               //  Eigen::VectorXi nabla_smooth_test (AA2 * xitest + bb2); //
               // std::cout << "nabla_smooth_test " << (nabla_smooth_test).format(HeavyFmt) << std::endl; //*xi
 
-               int fd;
-               fd = open("/dev/ttyACM3",O_RDWR | O_NONBLOCK);//O_NOCTTY );  //
+            //    int fd;
+            //    fd = open("/dev/ttyACM0",O_RDWR | O_NONBLOCK);//O_NOCTTY );  //
 
-                  struct pollfd fds[1];
-                fds[0].fd = fd;
-                fds[0].events = POLLIN ;
+            //     struct pollfd fds[1];
+            //     fds[0].fd = fd;
+            //     fds[0].events = POLLIN ;
                 
 
-               if(fd == -1)           /* Error Checking */
-                             printf("\n  Error! in Opening ttyACM1  ");
-                      else
-                             printf("\n  ttyACM1 Opened Successfully ");
+            //    if(fd == -1)           /* Error Checking */
+            //                  printf("\n  Error! in Opening ttyACM1  ");
+            //           else
+            //                  printf("\n  ttyACM1 Opened Successfully ");
 
-                  struct termios SerialPortSettings;  /* Create the structure                          */
+            //       struct termios SerialPortSettings;  /* Create the structure                          */
 
-                tcgetattr(fd, &SerialPortSettings); /* Get the current attributes of the Serial port */
+            //     tcgetattr(fd, &SerialPortSettings); /* Get the current attributes of the Serial port */
 
-                /* Setting the Baud rate */ //B230400
-                cfsetispeed(&SerialPortSettings,B230400); /* Set Read  Speed as 9600                       */
-                cfsetospeed(&SerialPortSettings,B230400); // Set Write Speed as 9600
+            //     /* Setting the Baud rate */ //B230400
+            //     cfsetispeed(&SerialPortSettings,B230400); /* Set Read  Speed as 9600                       */
+            //     cfsetospeed(&SerialPortSettings,B230400); // Set Write Speed as 9600
                 
-                SerialPortSettings.c_cflag &= ~PARENB;   /* Disables the Parity Enable bit(PARENB),So No Parity   */
-                SerialPortSettings.c_cflag &= ~CSTOPB;   /* CSTOPB = 2 Stop bits,here it is cleared so 1 Stop bit */
-                SerialPortSettings.c_cflag &= ~CSIZE;  /* Clears the mask for setting the data size             */
-                SerialPortSettings.c_cflag |=  CS8;      /* Set the data bits = 8                                 */
-                SerialPortSettings.c_cflag &= ~CRTSCTS;       /* No Hardware flow Control                         */
-                SerialPortSettings.c_cflag |= CREAD | CLOCAL; /* Enable receiver,Ignore Modem Control lines       */ 
-                SerialPortSettings.c_iflag &= ~(IXON | IXOFF | IXANY);          /* Disable XON/XOFF flow control both i/p and o/p */
-                SerialPortSettings.c_iflag &= ~(ICANON | ECHO | ECHOE | ISIG);  /* Non Cannonical mode                            */
-                SerialPortSettings.c_oflag &= ~OPOST;/*No Output Processing*/
-                /* Setting Time outs */
-                SerialPortSettings.c_cc[VMIN] = 500; /* Read at least 10 characters */
-                SerialPortSettings.c_cc[VTIME] = 0; /* Wait indefinetly   */
+            //     SerialPortSettings.c_cflag &= ~PARENB;   /* Disables the Parity Enable bit(PARENB),So No Parity   */
+            //     SerialPortSettings.c_cflag &= ~CSTOPB;   /* CSTOPB = 2 Stop bits,here it is cleared so 1 Stop bit */
+            //     SerialPortSettings.c_cflag &= ~CSIZE;  /* Clears the mask for setting the data size             */
+            //     SerialPortSettings.c_cflag |=  CS8;      /* Set the data bits = 8                                 */
+            //     SerialPortSettings.c_cflag &= ~CRTSCTS;       /* No Hardware flow Control                         */
+            //     SerialPortSettings.c_cflag |= CREAD | CLOCAL; /* Enable receiver,Ignore Modem Control lines       */ 
+            //     SerialPortSettings.c_iflag &= ~(IXON | IXOFF | IXANY);          /* Disable XON/XOFF flow control both i/p and o/p */
+            //     SerialPortSettings.c_iflag &= ~(ICANON | ECHO | ECHOE | ISIG);  /* Non Cannonical mode                            */
+            //     SerialPortSettings.c_oflag &= ~OPOST;/*No Output Processing*/
+            //     /* Setting Time outs */
+            //     SerialPortSettings.c_cc[VMIN] = 10; /* Read at least 10 characters */
+            //     SerialPortSettings.c_cc[VTIME] = 0; /* Wait indefinetly   */
 
 
-                if((tcsetattr(fd,TCSANOW,&SerialPortSettings)) != 0) /* Set the attributes to the termios structure*/
-                    printf("\n  ERROR ! in Setting attributes");
-                else
-                    printf("\n  BaudRate = 115200 \n  StopBits = 1 \n  Parity   = none");
+            //     if((tcsetattr(fd,TCSANOW,&SerialPortSettings)) != 0) /* Set the attributes to the termios structure*/
+            //         printf("\n  ERROR ! in Setting attributes");
+            //     else
+            //         printf("\n  BaudRate = 115200 \n  StopBits = 1 \n  Parity   = none");
                   
-                      /*------------------------------- Read data from serial port -----------------------------*/
-                char write_buffer[] = "h";  /* Buffer containing characters to write into port       */ 
-                int  bytes_written  = 0;    /* Value for storing the number of bytes written to the port */ 
-                tcflush(fd, TCIFLUSH);    //Discards old data in the rx buffer            
+            //           /*------------------------------- Read data from serial port -----------------------------*/
+            //     char write_buffer[] = "h";  /* Buffer containing characters to write into port       */ 
+            //     int  bytes_written  = 0;    /* Value for storing the number of bytes written to the port */ 
+            //     tcflush(fd, TCIFLUSH);    //Discards old data in the rx buffer            
 
-                char read_buffer[1000];    //Buffer to store the data received              
-                int  bytes_read = 0;    /* Number of bytes read by the read() system call */
-                int x = 10000000;
-                int counter=0;
-                int n = -12340;//2147480000;//JJ2(0,3);
-                int number2 = n;
-                char numberStr[4];
-                char numberStr2[5];
-                memcpy(numberStr, &number2, 4);
-                numberStr2[0] = 'h';
-                numberStr2[1] = numberStr[0];
-                numberStr2[2] = numberStr[1];
-                numberStr2[3] = numberStr[2];
-                numberStr2[4] = numberStr[3];
-                //printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
+            //     char read_buffer[1000];    //Buffer to store the data received              
+            //     int  bytes_read = 0;    /* Number of bytes read by the read() system call */
+            //     int x = 10000000;
+            //     int counter=0;
+            //     int n = -12340;//2147480000;//JJ2(0,3);
+            //     int number2 = n;
+            //     char numberStr[4];
+            //     char numberStr2[5];
+            //     memcpy(numberStr, &number2, 4);
+            //     numberStr2[0] = 'h';
+            //     numberStr2[1] = numberStr[0];
+            //     numberStr2[2] = numberStr[1];
+            //     numberStr2[3] = numberStr[2];
+            //     numberStr2[4] = numberStr[3];
+            //     //printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
                 
-                while(true)
-                {
+            //     while(true)
+            //     {
 
-                  counter+=1;
-                  n+=1;
-                  number2 = n;
-                  printf("number: %d \n", number2);
+            //       counter+=1;
+            //       n+=1;
+            //       number2 = n;
+            //       printf("number: %d \n", number2);
 
-                  memcpy(numberStr, &number2, 4);
-                  numberStr2[0] = 'h';
-                  numberStr2[1] = numberStr[0];
-                  numberStr2[2] = numberStr[1];
-                  numberStr2[3] = numberStr[2];
-                  numberStr2[4] = numberStr[3];
-                      //printf("\n  %d i", x); 
+            //       memcpy(numberStr, &number2, 4);
+            //       numberStr2[0] = 'h';
+            //       numberStr2[1] = numberStr[0];
+            //       numberStr2[2] = numberStr[1];
+            //       numberStr2[3] = numberStr[2];
+            //       numberStr2[4] = numberStr[3];
+            //           //printf("\n  %d i", x); 
                                    
 
-                 auto start = std::chrono::high_resolution_clock::now();
+            //      //auto start = std::chrono::high_resolution_clock::now();
                   
-                 //auto temp = ("h"+std::to_string(x)+"g").c_str();
-                 //std::cout << "temp:  " << temp << std::endl;
-                // std::string strtosend = "h" + std::string(numberStr);
-                 bytes_written = write(fd,  numberStr2 ,sizeof(numberStr2)); //strtosend.c_str()
-                             printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
-
-                 int pollrc = poll( fds, 1,100);
-                //bytes_written = write(fd, "a",1); 
-                //for(int i =0; i<100; i++)
-                //{
+            //      //auto temp = ("h"+std::to_string(x)+"g").c_str();
+            //      //std::cout << "temp:  " << temp << std::endl;
+            //     // std::string strtosend = "h" + std::string(numberStr);
+            //        int pollrc = poll( fds, 1,100);
+            //       printf("%hhX %hhX %hhX %hhX\n", numberStr[0] , numberStr[1], numberStr[2], numberStr[3]);
+            //      bytes_written = write(fd,  numberStr2 ,sizeof(numberStr2)); //strtosend.c_str()
+                             
+                                            
+                
+            //      //auto start = std::chrono::high_resolution_clock::now();
+            //      //poll was here
+            //     //bytes_written = write(fd, "a",1); 
+            //     //for(int i =0; i<100; i++)
+            //     //{
                  
-                //"habhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhab"
-                //,90);
-                //"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
-                //, 96*8);//fd,write_buffer,sizeof(write_buffer));
-                //}
-                if( fds[0].revents & POLLIN )
-                {
-                    //char buff[1024];
-                    //ssize_t rc = read(serial_fd, buff, sizeof(buff) );
-                     printf("\n  %d Bytes written to ttyUSB0", bytes_written);  
-                    printf("\n\n  Bytes Rxed :%d \n", bytes_read); /* Print the number of bytes read */
-                    bytes_read = read(fd,&read_buffer,1000); /* Read the data                   */
-                    if ( bytes_read <= 0 )
-                      {
-                      cout << "Error " << errno << " opening " << "/dev/ttyUSB0" << ": " << strerror (errno) << endl;
-                      }
-                    if (bytes_read > 0)
-                    {
-                        /* You've got rc characters. do something with buff */
-                      for(int i=0;i<bytes_read;i++){  /*printing only the received characters*/
-                          //printf("%c",read_buffer[i]);
-                          if (read_buffer[i] == 0x3A)
-                            printf(":");
-                          else{
-                          printf("%x", read_buffer[i] & 0xff);
-                          }
-                        }
-                         printf("\n +----------------------------------+\n\n\n");
+            //     //"habhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhabhab"
+            //     //,90);
+            //     //"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+            //     //, 96*8);//fd,write_buffer,sizeof(write_buffer));
+            //     //}
+            //     if( fds[0].revents & POLLIN )
+            //     {
+            //           // auto finish = std::chrono::high_resolution_clock::now();
+            //           // elapsed = finish - start;
+            //           // std::cout << "time:  " << elapsed.count() << endl;
+            //           // elapsed = std::chrono::seconds { 0 };
+            //           // printf("\n +----------------------------------+\n\n\n");
+            //         //char buff[1024];
+            //         //ssize_t rc = read(serial_fd, buff, sizeof(buff) );
+            //          printf("\n  %d Bytes written to ttyUSB0", bytes_written);  
+            //         bytes_read = read(fd,&read_buffer,1000); /* Read the data                   */
+            //          printf("\n\n  Bytes Rxed :%d \n", bytes_read); /* Print the number of bytes read */
+
+            //         if ( bytes_read <= 0 )
+            //           {
+            //           cout << "Error " << errno << " opening " << "/dev/ttyUSB0" << ": " << strerror (errno) << endl;
+            //           }
+            //         if (bytes_read > 0)
+            //         {
+            //             /* You've got rc characters. do something with buff */
+            //           for(int i=0;i<bytes_read;i++){  /*printing only the received characters*/
+            //               //printf("%c",read_buffer[i]);
+            //               if (read_buffer[i] == 0x3A)
+            //                 printf(":");
+            //               else{
+            //               printf("%x", read_buffer[i] & 0xff);
+            //               }
+            //             }
+            //              printf("\n +----------------------------------+\n\n\n");
                        
-                      auto finish = std::chrono::high_resolution_clock::now();
-                      elapsed = finish - start;
-                      std::cout << "time:  " << elapsed.count() << endl;
-                      elapsed = std::chrono::seconds { 0 };
-                      printf("\n +----------------------------------+\n\n\n");
-                    }
-                }
 
-                //x = x +1;
-            }
+            //         }
+            //     }
 
-            close(fd); /* Close the serial port */                                  
+            //     //x = x +1;
+            // }
+
+            // close(fd); /* Close the serial port */                                  
    // int x =10;
    // int y =10;
    // int A[x][y];
@@ -1147,16 +1164,16 @@ int main()
     // std::chrono::duration<double> elapsed = finish - start;
     // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   
-  // add_obs(3.0, 0.0, 2.0);
-  // add_obs(0.0, 3.0, 2.0);
-  // init_chomp();
-  // update_robots();  
-  // state = PAUSE;
+  add_obs(3.0, 0.0, 2.0);
+  add_obs(0.0, 3.0, 2.0);
+  init_chomp();
+  update_robots();  
+  state = PAUSE;
   
-  // gfx::add_button ("jumble", cb_jumble);
-  // gfx::add_button ("step", cb_step);
-  // gfx::add_button ("run", cb_run);
-  // gfx::main ("chomp", cb_idle, cb_draw, cb_mouse);
+  gfx::add_button ("jumble", cb_jumble);
+  gfx::add_button ("step", cb_step);
+  gfx::add_button ("run", cb_run);
+  gfx::main ("chomp", cb_idle, cb_draw, cb_mouse);
 
 
 }
