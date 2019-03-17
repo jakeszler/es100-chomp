@@ -74,8 +74,9 @@
        #include <arpa/inet.h>
 #include <Eigen/Sparse>
 
-#define INTMATH 1
-#define loopcountvar 100
+//#define INTMATH 1
+#define PRINTING 1
+#define loopcountvar 1000
 
 typedef Eigen::VectorXd Vector;
 typedef Eigen::MatrixXd Matrix;
@@ -98,17 +99,18 @@ Eigen::VectorXi qs2;
 Eigen::VectorXi qe2;
 
 static size_t const obs_dim(3); // x,y,R
-static size_t const nq (3);	// number of q stacked into xi
+static size_t const nq (1);	// number of q stacked into xi
 static size_t const cdim (5);	// dimension of config space
 static size_t const xidim (nq * cdim); // dimension of trajectory, xidim = nq * cdim
 static double const dt (1.0);	       // time step
-static double const eta (100.0); // >= 1, regularization factor for gradient descent
+static double const eta (128.0); // >= 1, regularization factor for gradient descent
 static double const lambda (1.0); // weight of smoothness objective
 static int const dt2 (1);        // time step
-static int const eta2 (100); // >= 1, regularization factor for gradient descent
+static int const eta2 (128); // >= 1, regularization factor for gradient descent
 static int const lambda2 (1); // weight of smoothness objective
 static int const scale(1024);//(1e3);
 int globalflag(0);
+int numberofcycles(0);
 //////////////////////////////////////////////////
 // gradient descent etc
 
@@ -146,7 +148,10 @@ public:
   Robot ()
     : pos_a_ (3),
       pos_b_ (3),
-      pos_c_ (3)
+      pos_c_ (3),
+      pos_a_2 (3),
+      pos_b_2 (3),
+      pos_c_2 (3)
   {
   }
   
@@ -204,17 +209,40 @@ public:
     Matrix Jxo (Matrix::Zero (6, 5));
     switch (node) {
     case 3:
-      Jxo (0, 4) = pos_b_[1] - gpoint[1];
+
+      Jxo (0, 4) = pos_b_[1] - gpoint[1]; // we can get rid of this case
       Jxo (1, 4) = gpoint[0] - pos_b_[0];
       Jxo (5, 4) = 1.0;
+          #ifdef PRINTING
+          std::cout << "pos_b_" << pos_b_.format(HeavyFmt) << std::endl;
+    std::cout << "gpoint" << gpoint.format(HeavyFmt) << std::endl;
+std::cout << "Jxo (0, 4)" << Jxo (0, 4) << std::endl;
+    std::cout << "Jxo (1, 4)" << Jxo (1, 4)<< std::endl;
+    
+      #endif
+
     case 2:
-      Jxo (0, 3) = pos_a_[1] - gpoint[1];
+   
+      Jxo (0, 3) = pos_a_[1] - gpoint[1]; 
       Jxo (1, 3) = gpoint[0] - pos_a_[0];
       Jxo (5, 3) = 1.0;
+       #ifdef PRINTING
+    std::cout << "pos_a_" << pos_a_.format(HeavyFmt) << std::endl;
+    std::cout << "gpoint" << gpoint.format(HeavyFmt) << std::endl;
+        std::cout << "Jxo (0, 3)" << Jxo (0, 3) << std::endl;
+    std::cout << "Jxo (1, 3)" << Jxo (1, 3)<< std::endl;
+    #endif
     case 1:
+  
       Jxo (0, 2) = position_[1] - gpoint[1];
       Jxo (1, 2) = gpoint[0]    - position_[0];
       Jxo (5, 2) = 1.0;
+          #ifdef PRINTING
+      std::cout << "pos_0" << position_.format(HeavyFmt) << std::endl;
+      std::cout << "gpoint" << gpoint.format(HeavyFmt) << std::endl;
+          std::cout << "Jxo (0, 2)" << Jxo (0, 2) << std::endl;
+    std::cout << "Jxo (1, 2)" << Jxo (1, 2)<< std::endl;
+      #endif
     case 0:
       Jxo (0, 0) = 1.0;
       Jxo (1, 1) = 1.0;
@@ -231,7 +259,8 @@ public:
     Eigen::MatrixXi Jxo2 (Eigen::MatrixXi::Zero (6, 5));
     switch (node) {
     case 3:
-      Jxo2 (0, 4) = pos_b_[1]*scale - gpoint[1];
+
+      Jxo2 (0, 4) = pos_b_[1]*scale - gpoint[1];  
       Jxo2 (1, 4) = gpoint[0] - pos_b_[0]*scale;
       Jxo2 (5, 4) = 1.0*scale;
     case 2:
@@ -240,7 +269,7 @@ public:
       Jxo2 (5, 3) = 1.0*scale;
     case 1:
       Jxo2 (0, 2) = position_[1]*scale - gpoint[1];
-      Jxo2 (1, 2) = gpoint[0]    - position_[0]*scale;
+      Jxo2 (1, 2) = gpoint[0] - position_[0]*scale;
       Jxo2 (5, 2) = 1.0*scale;
     case 0:
       Jxo2 (0, 0) = 1.0*scale;
@@ -261,29 +290,54 @@ public:
 	    (size_t) position.size());
     }
     position_ = position;
-      auto start = std::chrono::high_resolution_clock::now();
-
+      // auto start = std::chrono::high_resolution_clock::now();
+    #ifdef PRINTING
+    std::cout << "position: " << position.format(HeavyFmt) << std::endl;
+    #endif
     c2_ = cos (position_[2]);
+    //c2_ = 1 - (pow(position_[2],2)/2)+(pow(position_[2],4)/24) ;
     s2_ = sin (position_[2]);
-         auto finish = std::chrono::high_resolution_clock::now();
-         elapsed= finish - start;
-    std::cout << "Elapsed time: " << elapsed.count() << " s\n";
-    elapsed = std::chrono::seconds { 0 };
+    //std::cout << "c2_" << c2_ << std::endl;
+    //std::cout << "s2_" << s2_ << std::endl;
+    //      auto finish = std::chrono::high_resolution_clock::now();
+    //      elapsed= finish - start;
+    // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
+    // elapsed = std::chrono::seconds { 0 };
     ac2_ = len_a_ * c2_;
     as2_ = len_a_ * s2_;
     
     q23_ = position_[2] + position_[3];
-    c23_ = cos (q23_);
+       #ifdef PRINTING
+    std::cout << "ac2_" << ac2_ << std::endl;
+    std::cout << "as2_" << as2_ << std::endl;
+    #endif
+    c23_ = cos (q23_);//) fmod(q23_,3.1415) );
     s23_ = sin (q23_);
     bc23_ = len_b_ * c23_;
     bs23_ = len_b_ * s23_;
     
     q234_ = q23_ + position_[4];
+        #ifdef PRINTING
+    std::cout << "bc23_" << bc23_ << std::endl;
+    std::cout << "bs23_" << bs23_ << std::endl;
+    #endif
     c234_ = cos (q234_);
     s234_ = sin (q234_);
     cc234_ = len_c_ * c234_;
     cs234_ = len_c_ * s234_;
-    
+            #ifdef PRINTING
+    std::cout << "c234_" << s234_ << std::endl;
+    std::cout << "s234_" << s234_ << std::endl;
+    #endif
+    #ifdef PRINTING
+    std::cout << "before pos_a_0: " << pos_a_[0] << std::endl;
+    std::cout << "before pos_a_1: " << pos_a_[1] << std::endl;
+    std::cout << "before pos_b_0: " << pos_b_[0] << std::endl;
+    std::cout << "before pos_b_1: " << pos_b_[1] << std::endl;
+    std::cout << "before pos_c_0: " << pos_c_[0] << std::endl;
+    std::cout << "before pos_c_1: " << pos_c_[1] << std::endl;
+
+    #endif
     pos_a_ <<
       position_[0] + ac2_,
       position_[1] + as2_,
@@ -296,8 +350,59 @@ public:
       pos_b_[0] + cc234_,
       pos_b_[1] + cs234_,
       0.0;
+
+      #ifdef PRINTING
+    std::cout << "pos_a_0: " << pos_a_[0] << std::endl;
+    std::cout << "pos_a_1: " << pos_a_[1] << std::endl;
+    std::cout << "pos_b_0: " << pos_b_[0] << std::endl;
+    std::cout << "pos_b_1: " << pos_b_[1] << std::endl;
+    std::cout << "pos_c_0: " << pos_c_[0] << std::endl;
+    std::cout << "pos_c_1: " << pos_c_[1] << std::endl;
+
+    #endif
   }
+  void update2 (Eigen::VectorXi const & position2)
+  {
+    if (position2.size() != 5) {
+      errx (EXIT_FAILURE, "Robot::update(): position has %zu DOF (but needs 5)",
+      (size_t) position2.size());
+    }
+    position_2 = position2;
+    //std::cout << "position2" << position2[2]<< std::endl;//.format(CleanFmt) << std::endl;
   
+    c2_2 = 1000* cos((double)  position_2[2]);
+    s2_2 = 1000*  sin((double)  position_2[2]);
+    //std::cout << "c2_2:" << c2_2 << std::endl;
+    //std::cout << "s2_2:" << s2_2 << std::endl;
+
+    ac2_2 = len_a_2 * c2_2;
+    as2_2 = len_a_2 * s2_2;
+    
+    q23_2 = position_2[2] + position_2[3];
+    c23_2 = 1;//cos (q23_2);
+    s23_2 = 1;//sin (q23_2);
+    bc23_2 = len_b_2 * c23_2;
+    bs23_2 = len_b_2 * s23_2;
+    
+    q234_2 = q23_2 + position_2[4];
+    c234_2 = 1;//cos (q234_2);
+    s234_2 = 1;//sin (q234_2);
+    cc234_2 = len_c_2 * c234_2;
+    cs234_2 = len_c_2 * s234_2;
+    
+    pos_a_2 <<
+      position_2[0] + ac2_2,
+      position_2[1] + as2_,
+      0;
+    pos_b_2 <<
+      pos_a_2[0] + bc23_2,
+      pos_a_2[1] + bs23_2,
+      0;
+    pos_c_2 <<
+      pos_b_2[0] + cc234_2,
+      pos_b_2[1] + cs234_2,
+      0;
+  }
   
   void draw () const
   {
@@ -321,11 +426,21 @@ public:
   static double const len_b_;
   static double const len_c_;
   
+  static int const radius_2;
+  static int const len_a_2;
+  static int const len_b_2;
+  static int const len_c_2;
+
   Vector position_;
   Vector pos_a_;
   Vector pos_b_;
   Vector pos_c_;
   
+  Eigen::VectorXi position_2;
+  Eigen::VectorXi pos_a_2;
+  Eigen::VectorXi pos_b_2;
+  Eigen::VectorXi pos_c_2;
+
   double c2_;
   double s2_;
   double c23_;
@@ -340,12 +455,33 @@ public:
   double bs23_;
   double cc234_;
   double cs234_;
+
+
+  int c2_2;
+  int s2_2;
+  int c23_2;
+  int s23_2;
+  int c234_2;
+  int s234_2;
+  int q23_2;
+  int q234_2;
+  int ac2_2;
+  int as2_2;
+  int bc23_2;
+  int bs23_2;
+  int cc234_2;
+  int cs234_2;
 };
 
 double const Robot::radius_ (0.5);
 double const Robot::len_a_ (1);//(0.8);
 double const Robot::len_b_ (1);//(0.9);
 double const Robot::len_c_ (1);//(0.9);
+
+int const Robot::radius_2 (1);
+int const Robot::len_a_2 (1);//(0.8);
+int const Robot::len_b_2 (1);//(0.9);
+int const Robot::len_c_2 (1);//(0.9);
 
 Robot rstart;
 Robot rend;
@@ -380,7 +516,12 @@ static void update_robots ()
     robots.resize (nq);
   }
   for (size_t ii (0); ii < nq; ++ii) {
+    //std::cout << "ii: " << ii<< " s\n";
+    //std::cout << "xi: " << xi.format(CleanFmt)<< " s\n";
+    //std::cout << "xi2: " << xi2.format(CleanFmt)<< " s\n";
     robots[ii].update (xi.block (ii * cdim, 0, cdim, 1));
+    //robots[ii].update2 (xi2.block (ii * cdim, 0, cdim, 1));
+
   }
     //auto finish = std::chrono::high_resolution_clock::now();
     //elapsed= finish - start;
@@ -514,8 +655,7 @@ static void cb_idle ()
   // beginning of "the" CHOMP iteration
   //if(countvar < loopcountvar){
   //AA2 scale by 1000*1000 and bb2 scale by 1000
-  for(int countiter = 0;  countiter < 10; countiter++)
-  {
+  //for(int countiter = 0;  countiter < 10; countiter++){
   #ifdef INTMATH
   Eigen::VectorXi nabla_smooth2 (AA2*( ((xi2/scale)) ) +(bb2));//(((AA * xi + bb)*scale*scale).cast<int>());//
   //Eigen::VectorXi nabla_smoothtest ((AA2*( ((xi*1000).cast<int>()) ) )); //scaled by 1000*1000 *( ((xi*1000).cast<int>()) ) 
@@ -528,9 +668,14 @@ static void cb_idle ()
   //std::cout << "xi2 " << (xi2).format(HeavyFmt) << std::endl; //*xi
   Eigen::VectorXi nabla_obs2 (Eigen::VectorXi::Zero (xidim));
   #else
-    Vector nabla_smooth ((AA * xi + bb)); //
+  Vector nabla_smooth ((AA * xi + bb)); //
 //  std::cout << "nabla_smooth " << nabla_smooth.rows() << "x" << nabla_smooth.cols() << std::endl; 
-  // std::cout << "AA " << (AA).format(HeavyFmt) << std::endl; //*xi
+     #ifdef PRINTING
+     std::cout << "AA " << (AA).format(HeavyFmt) << std::endl; //*xi
+     std::cout << "bb " << (bb).format(HeavyFmt) << std::endl; //*xi
+     std::cout << "xi " << (xi).format(HeavyFmt) << std::endl; //*xi
+     std::cout << "nabla_smooth " << (nabla_smooth).format(HeavyFmt) << std::endl;
+     #endif
   Vector const & xidd (nabla_smooth); 
   Vector nabla_obs (Vector::Zero (xidim));
 
@@ -561,36 +706,50 @@ static void cb_idle ()
 
   //std::cout << bb.format(CleanFmt) << std::endl;
   auto start = std::chrono::high_resolution_clock::now();
-
+  #ifdef PRINTING
+     std::cout << "-------------------------" << std::endl;
+  #endif
   for (int p = nq-1; -1 < p; --p) { //nq-1
     //std::cout << "p:"<< p << std::endl;
     int iq = p;//arr[p];
     Vector qd;
     Eigen::VectorXi qd2;
+    #ifdef PRINTING
+     std::cout << "IQ: " <<iq << std::endl;
+     #endif
     if (iq == nq - 1) {
+      
       #ifdef INTMATH
       qd2 = (qe2 - (xi2.block (iq * cdim, 0, cdim, 1)/scale));   
-
       //qd2 = (qe2 - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>());
       #else
+
       qd = qe - xi.block (iq * cdim, 0, cdim, 1);
-      //std::cout << qd2.format(CleanFmt) << std::endl;
+      #ifdef PRINTING
+             
+      std::cout << "xi.block"<<xi.block (iq * cdim, 0, cdim, 1).format(HeavyFmt) << std::endl;
+      std::cout << "qe"<<qe.format(HeavyFmt) << std::endl;
+      #endif
       #endif
     }
     else {
       #ifdef INTMATH
           qd2 = (xi2.block ((iq+1) * cdim, 0, cdim, 1)/scale) - (xi2.block (iq * cdim, 0, cdim, 1)/scale);
     #else
+      #ifdef PRINTING
+        std::cout << "xi.block else"<<xi.block (iq * cdim, 0, cdim, 1).format(HeavyFmt) << std::endl;
+        std::cout << "qe2 else"<<qe.format(HeavyFmt) << std::endl;
+      #endif
       qd = xi.block ((iq+1) * cdim, 0, cdim, 1) - xi.block (iq * cdim, 0, cdim, 1);
       //qd2 = (xi.block ((iq+1) * cdim, 0, cdim, 1)*scale).cast<int>() - (xi.block (iq * cdim, 0, cdim, 1)*scale).cast<int>();
       #endif
     }
            //std::cout << "xi2" <<xi2.block (iq * cdim, 0, cdim, 1).format(CleanFmt) << std::endl;
 
-    for (size_t ib (0); ib < 4; ++ib) { // later: configurable number of body points
-
-      // std::cout << "---------" << std::endl;
-
+    for (int ib = 0; ib < 4; ++ib) { // later: configurable number of body points
+#ifdef PRINTING
+       std::cout << "000000000000000" << std::endl;
+ #endif
       // std::cout << xx.format(CleanFmt) << std::endl;
 
 
@@ -606,9 +765,7 @@ static void cb_idle ()
        // std::cout << "---------" << std::endl;
         //std::cout << "JJfull "<<(tempjj.format(CleanFmt)) << std::endl;
       //int x = (JJ2(0,3) >> (8*1)) & 0xff;
-      
      //unsigned long n = 175;
-
 //       unsigned char bytes[4];
 //      bytes[0] = (n >> 24) && 0xFF;
 //       bytes[1] = (n >> 16) && 0xFF;
@@ -623,17 +780,24 @@ static void cb_idle ()
        Eigen::VectorXi const xd2 ((JJ2 * qd2)/scale);
       //std::cout << "xd2 "<< xd2.rows() << "x" << xd2.cols() << std::endl;
       // std::cout << "xd2 "<< xd2.format(CleanFmt) << std::endl;
-      int const vel2 (xd2.norm());//xd2.norm()
+      int const vel2 (xd2.sum());//xd2.norm()
 
       //std::cout << "vel2: " << vel2<< std::endl;
 
       #else
-
+      //printf("%d\n", ib );
       Vector const xx (robots[iq].frame(ib).translation());
-      Matrix const JJ (robots[iq].computeJxo (ib, xx) .block (0, 0, 2, 5)); // XXXX hardcoded indices
 
+
+      Matrix const JJ (robots[iq].computeJxo (ib, xx).block (0, 0, 2, 5)); // XXXX hardcoded indices
+     
       Vector const xd (JJ * qd);
-
+      #ifdef PRINTING
+      std::cout << "ib: " << ib<< std::endl;
+       std::cout << "xx: " << xx<< std::endl;
+       std::cout << "JJ: " << JJ.format(HeavyFmt)<< std::endl;
+       std::cout << "qd: " << qd.format(HeavyFmt)<< std::endl;
+       #endif
       double const vel (xd.sum());//xd.norm());
 
      //   std::cout << "xd"<< xd.format(CleanFmt) << std::endl;
@@ -663,10 +827,17 @@ static void cb_idle ()
       #else
       if (vel < 1.0e-3)
         continue;
-      Vector const  xdn (xd / vel);
-      Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
+      Vector const  xdn (xd / 4); // dive by vel
+       //Vector const xdd (JJ * xidd.block (iq * cdim, 0, cdim , 1));
       Matrix const prj (Matrix::Identity (2, 2) - xdn * xdn.transpose()); // hardcoded planar case
-      Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
+      //Vector const kappa (prj * xdd / pow(vel, 2.0)); // very small could cause issue // 
+      #ifdef PRINTING
+      std::cout << "xdn "<< xdn.format(HeavyFmt) << std::endl;
+      std::cout << "vel "<< vel << std::endl;
+       //std::cout << "xdd "<< xdd.format(CleanFmt) << std::endl;
+       std::cout << "xidd "<< xidd.format(HeavyFmt) << std::endl;
+       std::cout << "prj "<< prj.format(HeavyFmt) << std::endl; 
+      #endif
       //Vector const test  (prj2.cast<double>() * xdd2.cast<double>()/pow(vel2, 2.0)); 
       auto temp =obs;
 
@@ -674,9 +845,11 @@ static void cb_idle ()
       
 
      
-
           for (int ii = 0; ii < temp.cols(); ii++) {
-          
+          //continue;
+             #ifdef PRINTING
+          std::cout << "99999999" << std::endl;
+          #endif
           //cout << obs.size()<< endl;
           //printDimensions(xx);
           //std::cout << obs.format(CleanFmt) << sep;
@@ -685,11 +858,17 @@ static void cb_idle ()
           //Vector delta (xx.block (0, 0, 3, 1) - repulsor.point_);
           //std::cout << "gothere5" << std::endl;
           //std::cout << "xx: "<< xx.format(CleanFmt) << std::endl;
-          //std::cout << "xx.new: "<< xx.block (0, 0, 2, 1).format(CleanFmt) << std::endl;
+          
           
             #ifdef INTMATH
             Eigen::VectorXi delta2(xx2.block (0, 0, 2, 1) - obs2.block(0, ii, 2, 1));
+            
+   
             int const dist2(delta2.norm());
+               #ifdef PRINTING
+             std::cout << "dist "<< dist << std::endl;
+             std::cout << "nabla_obs "<< nabla_obs << std::endl;
+             #endif
             if ((dist2 >= obs2(2, ii)) || (dist2 < 1))
               continue;
             static int const gain2(1);
@@ -707,17 +886,43 @@ static void cb_idle ()
 
             #else
             Vector delta(xx.block (0, 0, 2, 1) - obs.block(0, ii, 2, 1));
-            double const dist(delta.norm());
-            if ((dist >= obs(2, ii)) || (dist < 1e-9))
+
+            // std::cout << "delta before"<< delta.format(CleanFmt) << std::endl;
+            // std::cout << "delta 0 "<< delta[0] << std::endl;
+             // #ifdef PRINTING
+             // std::cout << "nabla_obs2 "<< nabla_obs2 << std::endl;
+             // #endif
+            //delta[0] = ((delta[0]*1024));//lround(delta[0]);
+            //delta[1] = ((delta[0]*1024));//lround(delta[1]);
+
+            double const dist(sqrt (pow(delta[0],2.0)+ pow(delta[1],2.0)));//(delta.norm()));//[0]+delta[1]);//.norm()*0.7); 
+           //#ifdef PRINTING
+           // std::cout << "obs "<< obs.format(CleanFmt) << std::endl;
+            
+             #ifdef PRINTING
+            std::cout << "delta "<< delta.format(HeavyFmt) << std::endl;
+             std::cout << "prj "<< prj.format(HeavyFmt) << std::endl;
+
+             std::cout << "dist "<< dist << std::endl;
+             std::cout << "nabla_obs "<< nabla_obs << std::endl;
+              std::cout << "JJ.transpose() "<< JJ.transpose().format(HeavyFmt)<< std::endl;
+             
+             #endif
+            // #endif
+            if((dist > obs(2, ii)) || (dist < 1e-9))
               continue;
             static double const gain(1.0);
-            double temp = -gain *pow(1.0 - dist /obs(2, ii), 2.0);// / dist;
-            double const cost((1.0- dist / obs(2, ii)));//, 3.0)/3.0); // hardcoded param
+            double temp = -gain *pow(1.0 - dist /obs(2, ii), 1.0);// / dist;
+            //std::cout << "temp "<< dist << std::endl;
+
+            double const cost((1.0- dist / obs(2, ii)));  //, 3.0)/3.0); // hardcoded param
             //gain * obs(2, ii) *
-           // std::cout << "cost "<< cost << std::endl;
+
             delta *=  temp;
-            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose()  * vel * ((prj * delta)); //- (cost * kappa)  // delta F obslacate close
-            //
+            std::cout << "(prj * delta) "<< (prj * delta).format(HeavyFmt)<< std::endl;
+            nabla_obs.block(iq * cdim, 0, cdim, 1) += JJ.transpose() * vel * ((prj * delta)); //- (cost * kappa)  // delta F obslacate close
+            //   
+            
             #endif
 
           //std::cout << "delta: "<< delta << std::endl;
@@ -738,7 +943,7 @@ static void cb_idle ()
              // std::cout << "dist2 "<< dist2 << std::endl;
                    // std::cout << "nabla_smooth "<< nabla_smooth << std::endl;
                    // std::cout << "nabla_smooth2 "<< nabla_smooth2 << std::endl;
-                   //  std::cout << "nabla_obs "<< nabla_obs << std::endl;
+                    
                    // std::cout << "nabla_obs2 "<< nabla_obs2 << std::endl;
            //std::cout << "cost2 "<< cost2 << std::endl;
            //std::cout << "obs  "<<obs(2, ii) << std::endl;
@@ -802,6 +1007,7 @@ static void cb_idle ()
   //xi -= (dxi2)/ eta;///1000000
   xi2 -= (dxi2int)/eta2; ///(scale*scale) 
   xi = xi2.cast<double>()/(scale*scale);
+ // std::cout << "xi2 "<< xi2.format(CleanFmt) << std::endl;
   // xi2 scale by 1000000    
       //std::cout << "--------- "<< std::endl;
     //Eigen::SparseMatrix<int>  sparse = nabla_obs2.sparseView();
@@ -813,9 +1019,16 @@ static void cb_idle ()
          //exit (EXIT_FAILURE);
   #else
   Vector dxi (Ainv * ( nabla_obs + lambda *nabla_smooth)); //
-  //std::cout << "dxi "<< (dxi/eta).format(CleanFmt) << std::endl;
-  //std::cout << "dxi "<< dxi.format(CleanFmt) << std::endl;
-  xi -= dxi / eta;
+     //std::cout << "Ainv "<< Ainv.format(CleanFmt) << std::endl;
+     #ifdef PRINTING
+    std::cout << "nabla_smooth "<< nabla_smooth.format(HeavyFmt) << std::endl;
+    std::cout << "before xi "<< xi.format(HeavyFmt) << std::endl;
+    #endif
+    xi -= dxi / eta;
+    #ifdef PRINTING
+
+    std::cout << "xi "<< xi.format(HeavyFmt) << std::endl;
+    #endif
   #endif
      auto finish = std::chrono::high_resolution_clock::now();
         elapsed+= finish - start;
@@ -824,7 +1037,8 @@ static void cb_idle ()
   
   // end of "the" CHOMP iteration
   //////////////////////////////////////////////////
-  
+  numberofcycles++;
+  std::cout << "numberofcycles : " << numberofcycles << " s\n";
   update_robots ();
 
   //}
@@ -833,7 +1047,7 @@ static void cb_idle ()
     elapsed = std::chrono::seconds { 0 };
     countvar = 0;
   }
-}
+//} countiter loop here!!
   // std::cout << "Elapsed time: " << elapsed.count()/4 << " s\n";
   //   elapsed = std::chrono::seconds { 0 };
 }
@@ -1174,8 +1388,8 @@ int main()
     // std::chrono::duration<double> elapsed = finish - start;
     // std::cout << "Elapsed time: " << elapsed.count() << " s\n";
   
-  add_obs(3.0, 0.0, 2.0);
-  add_obs(0.0, 3.0, 2.0);
+  add_obs(2.0, 2.0, 2.0);
+  //add_obs(0.0, 3.0, 2.0);
   init_chomp();
   update_robots();  
   state = PAUSE;
